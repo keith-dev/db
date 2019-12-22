@@ -85,7 +85,7 @@ clib/strrchr.c
 clib/strsep.c							brew ce ce_small dynamic small static s60 vx vxsmall
 clib/strtol.c							brew
 clib/strtoul.c
-common/crypto_stub.c						brew ce_small small s60 vxsmall ce dynamic static vx
+common/crypto_stub.c						brew ce_small small s60 vxsmall
 common/db_byteorder.c						brew ce ce_small dynamic small static s60 vx vxsmall
 common/db_err.c							brew ce ce_small dynamic small static s60 vx vxsmall
 common/db_getlong.c						brew ce ce_small dynamic small static s60 vx vxsmall
@@ -97,6 +97,11 @@ common/util_arg.c						vx vxsmall
 common/util_cache.c						ce ce_small dynamic small static vx vxsmall
 common/util_log.c						ce ce_small dynamic small static vx vxsmall
 common/util_sig.c						dynamic small static vx vxsmall
+crypto/aes_method.c						ce dynamic static vx
+crypto/crypto.c							ce dynamic static vx
+crypto/mersenne/mt19937db.c					ce dynamic static vx
+crypto/rijndael/rijndael-alg-fst.c				ce dynamic static vx
+crypto/rijndael/rijndael-api-fst.c				ce dynamic static vx
 cxx/cxx_db.cpp							dynamic small static
 cxx/cxx_dbc.cpp							dynamic small static
 cxx/cxx_dbt.cpp							dynamic small static
