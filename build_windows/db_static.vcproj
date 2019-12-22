@@ -56,6 +56,7 @@
   </Configurations>
   <References/>
   <Files>
+    <File RelativePath="..\crypto\aes_method.c"/>
     <File RelativePath="..\btree\bt_compact.c"/>
     <File RelativePath="..\btree\bt_compare.c"/>
     <File RelativePath="..\btree\bt_compress.c"/>
@@ -78,7 +79,7 @@
     <File RelativePath="..\btree\btree_auto.c"/>
     <File RelativePath="..\db\crdel_auto.c"/>
     <File RelativePath="..\db\crdel_rec.c"/>
-    <File RelativePath="..\common\crypto_stub.c"/>
+    <File RelativePath="..\crypto\crypto.c"/>
     <File RelativePath="..\cxx\cxx_db.cpp"/>
     <File RelativePath="..\cxx\cxx_dbc.cpp"/>
     <File RelativePath="..\cxx\cxx_dbt.cpp"/>
@@ -226,6 +227,7 @@
     <File RelativePath="..\mp\mp_stat.c"/>
     <File RelativePath="..\mp\mp_sync.c"/>
     <File RelativePath="..\mp\mp_trickle.c"/>
+    <File RelativePath="..\crypto\mersenne\mt19937db.c"/>
     <File RelativePath="..\mutex\mut_alloc.c"/>
     <File RelativePath="..\mutex\mut_failchk.c"/>
     <File RelativePath="..\mutex\mut_method.c"/>
@@ -296,6 +298,8 @@
     <File RelativePath="..\repmgr\repmgr_stat.c"/>
     <File RelativePath="..\repmgr\repmgr_util.c"/>
     <File RelativePath="..\repmgr\repmgr_windows.c"/>
+    <File RelativePath="..\crypto\rijndael\rijndael-alg-fst.c"/>
+    <File RelativePath="..\crypto\rijndael\rijndael-api-fst.c"/>
     <File RelativePath="..\sequence\seq_stat.c"/>
     <File RelativePath="..\sequence\sequence.c"/>
     <File RelativePath="..\hmac\sha1.c"/>

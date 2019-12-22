@@ -75,7 +75,7 @@
 
 /* Define to 1 if Berkeley DB release includes strong cryptography. */
 #ifndef HAVE_SMALLBUILD
-/* #undef HAVE_CRYPTO */
+#define HAVE_CRYPTO 1
 #endif
 
 /* Define to 1 if using Intel IPP for cryptography. */

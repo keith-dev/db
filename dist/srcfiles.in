@@ -85,7 +85,7 @@ clib/strsep.c							brew ce ce_small s60 vx vxsmall
 clib/strtol.c							brew
 clib/time.c							brew ce ce_small
 common/clock.c							android brew ce ce_small s60 vx vxsmall 
-common/crypto_stub.c						android brew ce_small s60 vxsmall  ce vx
+common/crypto_stub.c						android brew ce_small s60 vxsmall 
 common/db_byteorder.c						android brew ce ce_small s60 vx vxsmall 
 common/db_compint.c						android brew ce ce_small s60 vx vxsmall 
 common/db_err.c							android brew ce ce_small s60 vx vxsmall 
@@ -101,6 +101,11 @@ common/util_cache.c						ce ce_small vx vxsmall
 common/util_log.c						ce ce_small vx vxsmall
 common/util_sig.c						vx vxsmall
 common/zerofill.c						android brew ce ce_small s60 vx vxsmall 
+crypto/aes_method.c						ce vx
+crypto/crypto.c							ce vx
+crypto/mersenne/mt19937db.c					ce vx
+crypto/rijndael/rijndael-alg-fst.c				ce vx
+crypto/rijndael/rijndael-api-fst.c				ce vx
 cxx/cxx_db.cpp							vx6
 cxx/cxx_dbc.cpp							vx6
 cxx/cxx_dbt.cpp							vx6

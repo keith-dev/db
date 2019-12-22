@@ -210,6 +210,7 @@
     <preprocessor config="all">DB_CREATE_DLL;WIN32;_UNICODE;UNICODE</preprocessor>
     <preprocessor config="Debug">DIAGNOSTIC;CONFIG_TEST</preprocessor>
     <files>
+      <file name="crypto/aes_method.c"/>
       <file name="btree/bt_compact.c"/>
       <file name="btree/bt_compare.c"/>
       <file name="btree/bt_compress.c"/>
@@ -232,7 +233,7 @@
       <file name="btree/btree_auto.c"/>
       <file name="db/crdel_auto.c"/>
       <file name="db/crdel_rec.c"/>
-      <file name="common/crypto_stub.c"/>
+      <file name="crypto/crypto.c"/>
       <file name="cxx/cxx_db.cpp"/>
       <file name="cxx/cxx_dbc.cpp"/>
       <file name="cxx/cxx_dbt.cpp"/>
@@ -367,6 +368,7 @@
       <file name="mp/mp_stat.c"/>
       <file name="mp/mp_sync.c"/>
       <file name="mp/mp_trickle.c"/>
+      <file name="crypto/mersenne/mt19937db.c"/>
       <file name="mutex/mut_alloc.c"/>
       <file name="mutex/mut_failchk.c"/>
       <file name="mutex/mut_method.c"/>
@@ -437,7 +439,9 @@
       <file name="repmgr/repmgr_stat.c"/>
       <file name="repmgr/repmgr_util.c"/>
       <file name="repmgr/repmgr_windows.c"/>
-      <file name="sequence/seq_stat.c"/> ce vx
+      <file name="crypto/rijndael/rijndael-alg-fst.c"/>
+      <file name="crypto/rijndael/rijndael-api-fst.c"/>
+      <file name="sequence/seq_stat.c"/>
       <file name="sequence/sequence.c"/>
       <file name="hmac/sha1.c"/>
       <file name="clib/strsep.c"/>
