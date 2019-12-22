@@ -66,7 +66,7 @@ clib/strdup.c					vx vxsmall
 clib/strerror.c
 clib/strtol.c
 clib/strtoul.c
-common/crypto_stub.c				dynamic small static vx vxsmall
+common/crypto_stub.c				small vxsmall
 common/db_byteorder.c				dynamic small static vx vxsmall
 common/db_err.c					dynamic small static vx vxsmall
 common/db_getlong.c				dynamic small static vx vxsmall
@@ -76,6 +76,11 @@ common/util_arg.c				vx vxsmall
 common/util_cache.c				dynamic small static vx vxsmall
 common/util_log.c				dynamic small static vx vxsmall
 common/util_sig.c				dynamic small static vx vxsmall
+crypto/aes_method.c				dynamic static vx
+crypto/crypto.c					dynamic static vx
+crypto/mersenne/mt19937db.c			dynamic static vx
+crypto/rijndael/rijndael-alg-fst.c		dynamic static vx
+crypto/rijndael/rijndael-api-fst.c		dynamic static vx
 cxx/cxx_db.cpp					dynamic small static
 cxx/cxx_dbc.cpp					dynamic small static
 cxx/cxx_dbt.cpp					dynamic small static
