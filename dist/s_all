@@ -1,8 +1,7 @@
 #!/bin/sh -
-#	$Id: s_all,v 12.11 2008/01/17 13:59:11 bostic Exp $
+#	$Id$
 
 sh s_perm		# permissions.
-sh s_symlink		# symbolic links.
 sh s_readme		# distribution README file.
 
 sh s_config		# autoconf.
@@ -11,6 +10,8 @@ sh s_rpc		# RPC files.
 sh s_sig		# Structure signature.
 sh s_recover		# logging/recovery files.
 sh s_message		# replication and repmgr message files.
+sh s_sql		# regenerate sqlite3.c
+sh s_php                # PHP config files
 
 #############################################################
 # The following order is important, s_include must run after
@@ -20,7 +21,7 @@ sh s_include		# standard include files.
 
 sh s_java		# Java support.
 sh s_test		# Test suite support.
-sh s_tags		# Tags files.
+#sh s_tags		# Tags files.
 
 #############################################################
 # We only build the Cscope file for releases, it's too big to
@@ -39,3 +40,4 @@ sh s_s60_mmp		# S60 support: build environment.
 sh s_vxworks		# VxWorks support.
 sh s_windows		# Windows support.
 sh s_windows_dsp	# Windows support: build environment.
+sh s_android            # Android support: drop-in build environment.

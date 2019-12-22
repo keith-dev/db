@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: env_config.c,v 12.84 2008/02/12 15:34:06 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -32,8 +32,8 @@ __env_read_db_config(env)
 
 	/* Parse the config file. */
 	p = NULL;
-	if ((ret =
-	    __db_appname(env, DB_APP_NONE, "DB_CONFIG", 0, NULL, &p)) != 0)
+	if ((ret = __db_appname(env,
+	    DB_APP_NONE, "DB_CONFIG", NULL, &p)) != 0)
 		return (ret);
 	if (p == NULL)
 		fp = NULL;
@@ -46,11 +46,8 @@ __env_read_db_config(env)
 		return (0);
 
 	for (lc = 1; fgets(buf, sizeof(buf), fp) != NULL; ++lc) {
-		if ((p = strchr(buf, '\n')) == NULL) {
-			__db_errx(env, "DB_CONFIG: line %d: illegal input", lc);
-			ret = EINVAL;
-			break;
-		}
+		if ((p = strchr(buf, '\n')) == NULL)
+			p = buf + strlen(buf);
 		if (p > buf && p[-1] == '\r')
 			--p;
 		*p = '\0';
@@ -59,7 +56,7 @@ __env_read_db_config(env)
 		if (*p == '\0' || *p == '#')
 			continue;
 
-		if ((ret = __config_parse(env, buf, lc)) != 0)
+		if ((ret = __config_parse(env, p, lc)) != 0)
 			break;
 	}
 	(void)fclose(fp);
@@ -124,7 +121,7 @@ __config_parse(env, s, lc)
 	u_long uv1, uv2;
 	u_int32_t flags;
 	long lv1, lv2;
-	int nf;
+	int nf, onoff;
 	char *argv[CONFIG_SLOTS];
 
 	dbenv = env->dbenv;
@@ -150,25 +147,36 @@ format:		__db_errx(env,
 	}
 
 	if (strcasecmp(argv[0], "rep_set_config") == 0) {
-		if (nf != 2)
+		if (nf != 2 && nf != 3)
 			goto format;
+		onoff = 1;
+		if (nf == 3) {
+			if (strcasecmp(argv[2], "off") == 0)
+				onoff = 0;
+			else if (strcasecmp(argv[2], "on") != 0)
+				goto format;
+		}
+		if (strcasecmp(argv[1], "db_rep_conf_autoinit") == 0)
+			return (__rep_set_config(dbenv,
+			    DB_REP_CONF_AUTOINIT, onoff));
 		if (strcasecmp(argv[1], "db_rep_conf_bulk") == 0)
 			return (__rep_set_config(dbenv,
-			    DB_REP_CONF_BULK, 1));
+			    DB_REP_CONF_BULK, onoff));
 		if (strcasecmp(argv[1], "db_rep_conf_delayclient") == 0)
 			return (__rep_set_config(dbenv,
-			    DB_REP_CONF_DELAYCLIENT, 1));
+			    DB_REP_CONF_DELAYCLIENT, onoff));
 		if (strcasecmp(argv[1], "db_rep_conf_lease") == 0)
 			return (__rep_set_config(dbenv,
-			    DB_REP_CONF_LEASE, 1));
-		if (strcasecmp(argv[1], "db_rep_conf_noautoinit") == 0)
-			return (__rep_set_config(dbenv,
-			    DB_REP_CONF_NOAUTOINIT, 1));
+			    DB_REP_CONF_LEASE, onoff));
 		if (strcasecmp(argv[1], "db_rep_conf_nowait") == 0)
-			return (__rep_set_config(dbenv, DB_REP_CONF_NOWAIT, 1));
+			return (__rep_set_config(dbenv,
+			    DB_REP_CONF_NOWAIT, onoff));
 		if (strcasecmp(argv[1], "db_repmgr_conf_2site_strict") == 0)
 			return (__rep_set_config(dbenv,
-			    DB_REPMGR_CONF_2SITE_STRICT, 1));
+			    DB_REPMGR_CONF_2SITE_STRICT, onoff));
+		if (strcasecmp(argv[1], "db_repmgr_conf_elections") == 0)
+			return (__rep_set_config(dbenv,
+			    DB_REPMGR_CONF_ELECTIONS, onoff));
 		goto format;
 	}
 
@@ -281,6 +289,17 @@ format:		__db_errx(env,
 		return (__env_set_data_dir(dbenv, argv[1]));
 	}
 
+	if (strcasecmp(argv[0], "add_data_dir") == 0) {
+		if (nf != 2)
+			goto format;
+		return (__env_add_data_dir(dbenv, argv[1]));
+	}
+	if (strcasecmp(argv[0], "set_create_dir") == 0) {
+		if (nf != 2)
+			goto format;
+		return (__env_set_create_dir(dbenv, argv[1]));
+	}
+
 							/* Compatibility */
 	if (strcasecmp(argv[0], "set_intermediate_dir") == 0) {
 		if (nf != 2)
@@ -298,62 +317,80 @@ format:		__db_errx(env,
 	}
 
 	if (strcasecmp(argv[0], "set_flags") == 0) {
-		if (nf != 2)
+		if (nf != 2 && nf != 3)
 			goto format;
+		onoff = 1;
+		if (nf == 3) {
+			if (strcasecmp(argv[2], "off") == 0)
+				onoff = 0;
+			else if (strcasecmp(argv[2], "on") != 0)
+				goto format;
+		}
 		if (strcasecmp(argv[1], "db_auto_commit") == 0)
-			return (__env_set_flags(dbenv, DB_AUTO_COMMIT, 1));
+			return (__env_set_flags(dbenv, DB_AUTO_COMMIT, onoff));
 		if (strcasecmp(argv[1], "db_cdb_alldb") == 0)
-			return (__env_set_flags(dbenv, DB_CDB_ALLDB, 1));
+			return (__env_set_flags(dbenv, DB_CDB_ALLDB, onoff));
 		if (strcasecmp(argv[1], "db_direct_db") == 0)
-			return (__env_set_flags(dbenv, DB_DIRECT_DB, 1));
+			return (__env_set_flags(dbenv, DB_DIRECT_DB, onoff));
 		if (strcasecmp(argv[1], "db_dsync_db") == 0)
-			return (__env_set_flags(dbenv, DB_DSYNC_DB, 1));
+			return (__env_set_flags(dbenv, DB_DSYNC_DB, onoff));
 		if (strcasecmp(argv[1], "db_multiversion") == 0)
-			return (__env_set_flags(dbenv, DB_MULTIVERSION, 1));
+			return (__env_set_flags(dbenv, DB_MULTIVERSION, onoff));
 		if (strcasecmp(argv[1], "db_nolocking") == 0)
-			return (__env_set_flags(dbenv, DB_NOLOCKING, 1));
+			return (__env_set_flags(dbenv, DB_NOLOCKING, onoff));
 		if (strcasecmp(argv[1], "db_nommap") == 0)
-			return (__env_set_flags(dbenv, DB_NOMMAP, 1));
+			return (__env_set_flags(dbenv, DB_NOMMAP, onoff));
 		if (strcasecmp(argv[1], "db_nopanic") == 0)
-			return (__env_set_flags(dbenv, DB_NOPANIC, 1));
+			return (__env_set_flags(dbenv, DB_NOPANIC, onoff));
 		if (strcasecmp(argv[1], "db_overwrite") == 0)
-			return (__env_set_flags(dbenv, DB_OVERWRITE, 1));
+			return (__env_set_flags(dbenv, DB_OVERWRITE, onoff));
 		if (strcasecmp(argv[1], "db_region_init") == 0)
-			return (__env_set_flags(dbenv, DB_REGION_INIT, 1));
+			return (__env_set_flags(dbenv, DB_REGION_INIT, onoff));
 		if (strcasecmp(argv[1], "db_txn_nosync") == 0)
-			return (__env_set_flags(dbenv, DB_TXN_NOSYNC, 1));
+			return (__env_set_flags(dbenv, DB_TXN_NOSYNC, onoff));
 		if (strcasecmp(argv[1], "db_txn_nowait") == 0)
-			return (__env_set_flags(dbenv, DB_TXN_NOWAIT, 1));
+			return (__env_set_flags(dbenv, DB_TXN_NOWAIT, onoff));
 		if (strcasecmp(argv[1], "db_txn_snapshot") == 0)
-			return (__env_set_flags(dbenv, DB_TXN_SNAPSHOT, 1));
+			return (__env_set_flags(dbenv, DB_TXN_SNAPSHOT, onoff));
 		if (strcasecmp(argv[1], "db_txn_write_nosync") == 0)
 			return (
-			    __env_set_flags(dbenv, DB_TXN_WRITE_NOSYNC, 1));
+			    __env_set_flags(dbenv, DB_TXN_WRITE_NOSYNC, onoff));
 		if (strcasecmp(argv[1], "db_yieldcpu") == 0)
-			return (__env_set_flags(dbenv, DB_YIELDCPU, 1));
+			return (__env_set_flags(dbenv, DB_YIELDCPU, onoff));
 		if (strcasecmp(argv[1], "db_log_inmemory") == 0)
-			return (__log_set_config(dbenv, DB_LOG_IN_MEMORY, 1));
+			return (
+			    __log_set_config(dbenv, DB_LOG_IN_MEMORY, onoff));
 		if (strcasecmp(argv[1], "db_direct_log") == 0)
-			return (__log_set_config(dbenv, DB_LOG_DIRECT, 1));
+			return (__log_set_config(dbenv, DB_LOG_DIRECT, onoff));
 		if (strcasecmp(argv[1], "db_dsync_log") == 0)
-			return (__log_set_config(dbenv, DB_LOG_DSYNC, 1));
+			return (__log_set_config(dbenv, DB_LOG_DSYNC, onoff));
 		if (strcasecmp(argv[1], "db_log_autoremove") == 0)
-			return (__log_set_config(dbenv, DB_LOG_AUTO_REMOVE, 1));
+			return (
+			    __log_set_config(dbenv, DB_LOG_AUTO_REMOVE, onoff));
 		goto format;
 	}
 	if (strcasecmp(argv[0], "set_log_config") == 0) {
-		if (nf != 2)
+		if (nf != 2 && nf != 3)
 			goto format;
+		onoff = 1;
+		if (nf == 3) {
+			if (strcasecmp(argv[2], "off") == 0)
+				onoff = 0;
+			else if (strcasecmp(argv[2], "on") != 0)
+				goto format;
+		}
 		if (strcasecmp(argv[1], "db_log_auto_remove") == 0)
-			return (__log_set_config(dbenv, DB_LOG_AUTO_REMOVE, 1));
+			return (
+			    __log_set_config(dbenv, DB_LOG_AUTO_REMOVE, onoff));
 		if (strcasecmp(argv[1], "db_log_direct") == 0)
-			return (__log_set_config(dbenv, DB_LOG_DIRECT, 1));
+			return (__log_set_config(dbenv, DB_LOG_DIRECT, onoff));
 		if (strcasecmp(argv[1], "db_log_dsync") == 0)
-			return (__log_set_config(dbenv, DB_LOG_DSYNC, 1));
+			return (__log_set_config(dbenv, DB_LOG_DSYNC, onoff));
 		if (strcasecmp(argv[1], "db_log_in_memory") == 0)
-			return (__log_set_config(dbenv, DB_LOG_IN_MEMORY, 1));
+			return (
+			    __log_set_config(dbenv, DB_LOG_IN_MEMORY, onoff));
 		if (strcasecmp(argv[1], "db_log_zero") == 0)
-			return (__log_set_config(dbenv, DB_LOG_ZERO, 1));
+			return (__log_set_config(dbenv, DB_LOG_ZERO, onoff));
 		goto format;
 	}
 
@@ -409,6 +446,7 @@ format:		__db_errx(env,
 	}
 
 	CONFIG_INT("set_mp_max_openfd", __memp_set_mp_max_openfd);
+	CONFIG_UINT32("set_mp_pagesize", __memp_set_mp_pagesize);
 
 	if (strcasecmp(argv[0], "set_mp_max_write") == 0) {
 		if (nf != 3)
@@ -431,6 +469,14 @@ format:		__db_errx(env,
 		    dbenv, DB_REGION_INIT, lv1 == 0 ? 0 : 1));
 	}
 
+	if (strcasecmp(argv[0], "set_reg_timeout") == 0) {
+		if (nf != 2)
+			goto format;
+		CONFIG_GET_UINT32(argv[1], &uv1);
+		return (__env_set_timeout(
+		    dbenv, (u_int32_t)uv1, DB_SET_REG_TIMEOUT));
+	}
+
 	if (strcasecmp(argv[0], "set_shm_key") == 0) {
 		if (nf != 2)
 			goto format;
@@ -451,6 +497,7 @@ format:		__db_errx(env,
 		return (__env_set_tmp_dir(dbenv, argv[1]));
 	}
 
+	CONFIG_UINT32("set_thread_count", __env_set_thread_count);
 	CONFIG_UINT32("set_tx_max", __txn_set_tx_max);
 
 	if (strcasecmp(argv[0], "set_txn_timeout") == 0) {
@@ -462,8 +509,15 @@ format:		__db_errx(env,
 	}
 
 	if (strcasecmp(argv[0], "set_verbose") == 0) {
-		if (nf != 2)
+		if (nf != 2 && nf != 3)
 			goto format;
+		onoff = 1;
+		if (nf == 3) {
+			if (strcasecmp(argv[2], "off") == 0)
+				onoff = 0;
+			else if (strcasecmp(argv[2], "on") != 0)
+				goto format;
+		}
 		if (strcasecmp(argv[1], "db_verb_deadlock") == 0)
 			flags = DB_VERB_DEADLOCK;
 		else if (strcasecmp(argv[1], "db_verb_fileops") == 0)
@@ -486,6 +540,10 @@ format:		__db_errx(env,
 			flags = DB_VERB_REP_MSGS;
 		else if (strcasecmp(argv[1], "db_verb_rep_sync") == 0)
 			flags = DB_VERB_REP_SYNC;
+		else if (strcasecmp(argv[1], "db_verb_rep_system") == 0)
+			flags = DB_VERB_REP_SYSTEM;
+		else if (strcasecmp(argv[1], "db_verb_rep_test") == 0)
+			flags = DB_VERB_REP_TEST;
 		else if (strcasecmp(argv[1], "db_verb_repmgr_connfail") == 0)
 			flags = DB_VERB_REPMGR_CONNFAIL;
 		else if (strcasecmp(argv[1], "db_verb_repmgr_misc") == 0)
@@ -494,7 +552,7 @@ format:		__db_errx(env,
 			flags = DB_VERB_WAITSFOR;
 		else
 			goto format;
-		return (__env_set_verbose(dbenv, flags, 1));
+		return (__env_set_verbose(dbenv, flags, onoff));
 	}
 
 	__db_errx(env, "unrecognized name-value pair: %s", s);

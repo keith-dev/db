@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1999,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1999, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: tcl_db.h,v 12.13 2008/02/01 18:27:16 sue Exp $
+ * $Id$
  */
 
 #ifndef _DB_TCL_DB_H_
@@ -16,7 +16,7 @@ extern "C" {
 #define	MSG_SIZE 100		/* Message size */
 
 enum INFOTYPE {
-    I_ENV, I_DB, I_DBC, I_TXN, I_MP, I_PG, I_LOCK, I_LOGC, I_NDBM, I_SEQ};
+    I_DB, I_DBC, I_ENV, I_LOCK, I_LOGC, I_MP, I_NDBM, I_PG, I_SEQ, I_TXN};
 
 #define	MAX_ID		8	/* Maximum number of sub-id's we need */
 #define	DBTCL_PREP	64	/* Size of txn_recover preplist */
@@ -27,6 +27,30 @@ enum INFOTYPE {
 #define	DBTCL_GETCLOCK		0
 #define	DBTCL_GETLIMIT		1
 #define	DBTCL_GETREQ		2
+
+#define	DBTCL_MUT_ALIGN	0
+#define	DBTCL_MUT_INCR	1
+#define	DBTCL_MUT_MAX	2
+#define	DBTCL_MUT_TAS	3
+
+/*
+ * Data structure to record information about events that have occurred.  Tcl
+ * command "env event_info" can retrieve the information.  For now, we record
+ * only one occurrence per event type; "env event_info -clear" can be used to
+ * reset the info.
+ *
+ * Besides the bit flag that records the fact that an event type occurred, some
+ * event types have associated "info" and we record that here too.  When new
+ * event types are invented that have associated info, we should add a field
+ * here to record that info as well, so that it can be returned to the script
+ * with the "env event_info" results.
+ */ 
+typedef struct dbtcl_event_info {
+	u_int32_t	events;	/* Bit flag on for each event fired. */
+	int		panic_error;
+	int		newmaster_eid;
+	pid_t		attached_process;
+} DBTCL_EVENT_INFO;
 
 /*
  * Why use a home grown package over the Tcl_Hash functions?
@@ -73,13 +97,16 @@ typedef struct dbtcl_info {
 	} un;
 	union data {
 		int anydata;
-		db_pgno_t pgno;
-		u_int32_t lockid;
+		db_pgno_t pgno;		      /* For I_MP. */
+		u_int32_t lockid;	      /* For I_LOCK. */
+		DBTCL_EVENT_INFO *event_info; /* For I_ENV. */
+		DB_TXN_TOKEN *commit_token;   /* For I_TXN. */
 	} und;
 	union data2 {
 		int anydata;
-		int pagesz;
-		DB_COMPACT *c_data;
+		int pagesz;	    /* For I_MP. */
+		DB_COMPACT *c_data; /* For I_DB. */
+		db_mutex_t mutex;   /* Protects event_info (I_ENV). */
 	} und2;
 	DBT i_lockobj;
 	FILE *i_err;
@@ -88,8 +115,9 @@ typedef struct dbtcl_info {
 	/* Callbacks--Tcl_Objs containing proc names */
 	Tcl_Obj *i_compare;
 	Tcl_Obj *i_dupcompare;
-	Tcl_Obj *i_event;
 	Tcl_Obj *i_hashproc;
+	Tcl_Obj *i_isalive;
+	Tcl_Obj *i_part_callback;
 	Tcl_Obj *i_rep_send;
 	Tcl_Obj *i_second_call;
 
@@ -101,21 +129,24 @@ typedef struct dbtcl_info {
 } DBTCL_INFO;
 
 #define	i_anyp un.anyp
-#define	i_pagep un.anyp
-#define	i_envp un.envp
 #define	i_dbp un.dbp
 #define	i_dbcp un.dbcp
-#define	i_txnp un.txnp
-#define	i_mp un.mp
+#define	i_envp un.envp
 #define	i_lock un.lock
 #define	i_logc un.logc
+#define	i_mp un.mp
+#define	i_pagep un.anyp
+#define	i_txnp un.txnp
 
 #define	i_data und.anydata
 #define	i_pgno und.pgno
 #define	i_locker und.lockid
+#define	i_event_info und.event_info
+#define	i_commit_token und.commit_token
 #define	i_data2 und2.anydata
 #define	i_pgsz und2.pagesz
 #define	i_cdata und2.c_data
+#define	i_mutex und2.mutex
 
 #define	i_envtxnid i_otherid[0]
 #define	i_envmpid i_otherid[1]
@@ -141,7 +172,7 @@ extern DBTCL_GLOBAL __dbtcl_global;
  * the wrong, but that doesn't help us much -- cast the argument.
  */
 #define	NewStringObj(a, b)						\
-	Tcl_NewStringObj(a, (int)b)
+	Tcl_NewStringObj((a), (int)(b))
 
 #define	NAME_TO_DB(name)	(DB *)_NameToPtr((name))
 #define	NAME_TO_DBC(name)	(DBC *)_NameToPtr((name))
@@ -201,8 +232,27 @@ extern DBTCL_GLOBAL __dbtcl_global;
  * returned by DB.
  */
 #define	MAKE_STAT_STRLIST(s,s1) do {					\
-	result = _SetListElem(interp, res, (s), strlen(s),		\
-	    (s1), strlen(s1));						\
+	result = _SetListElem(interp, res, (s), (u_int32_t)strlen(s),	\
+	    (s1), (u_int32_t)strlen(s1));				\
+	if (result != TCL_OK)						\
+		goto error;						\
+} while (0)
+
+/*
+ * MAKE_SITE_LIST appends a {eid host port status} tuple to a result list
+ * that MUST be called 'res' that is a Tcl_Obj * in the local function.
+ * This macro also assumes a label "error" to go to in the event of a Tcl
+ * error.
+ */
+#define	MAKE_SITE_LIST(e, h, p, s, pr) do {				\
+	myobjc = 5;							\
+	myobjv[0] = Tcl_NewIntObj(e);					\
+	myobjv[1] = Tcl_NewStringObj((h), (int)strlen(h));		\
+	myobjv[2] = Tcl_NewIntObj((int)p);				\
+	myobjv[3] = Tcl_NewStringObj((s), (int)strlen(s));		\
+	myobjv[4] = Tcl_NewStringObj((pr), (int)strlen(pr));		\
+	thislist = Tcl_NewListObj(myobjc, myobjv);			\
+	result = Tcl_ListObjAppendElement(interp, res, thislist);	\
 	if (result != TCL_OK)						\
 		goto error;						\
 } while (0)

@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1997, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: os_unlink.c,v 12.26 2008/05/07 12:27:35 bschmeck Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -66,16 +66,26 @@ __os_unlink(env, path, overwrite_test)
 		else {
 			ret = __os_get_syserr();
 			if (__os_posix_err(ret) != ENOENT)
-				__db_err(env, ret,
-				    "MoveFile: rename %s to temporary file",
-				    path);
+				/* 
+				 * System doesn't always return ENOENT when
+				 * file is missing. So we need a double check
+				 * here. Set the return value to ENOENT when
+				 * file doesn't exist.
+				 */
+				if (__os_exists(env, path, NULL) == 0)
+					__db_err(env, ret,
+					    "MoveFile: "
+					    "rename %s to temporary file",
+					    path);
+				else
+					ret = ENOENT;
 		}
 
 		/*
 		 * Try removing the file using the delete-on-close flag.  This
 		 * plays nicer with files that are still open than DeleteFile.
 		 */
-		h = CreateFile(tpath, 0, 
+		h = CreateFile(tpath, 0,
 		    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 		    NULL, OPEN_EXISTING, FILE_FLAG_DELETE_ON_CLOSE, 0);
 		if (h != INVALID_HANDLE_VALUE) {
@@ -98,10 +108,13 @@ skipdel:
 	 * are expecting not to be there.  Reporting errors in these cases
 	 * is annoying.
 	 */
-	if (ret != 0) {
-		if ((t_ret = __os_posix_err(ret)) != ENOENT)
+	if ((ret != 0) && (t_ret = __os_posix_err(ret)) != ENOENT) {
+		/* Double check if the file exists. */
+		if (__os_exists(env, path, NULL) == 0) {
 			__db_syserr(env, ret, "DeleteFile: %s", path);
-		ret = t_ret;
+			ret = t_ret;
+		} else
+			ret = ENOENT;
 	}
 
 	return (ret);

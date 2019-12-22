@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2000,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2000, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: EventHandlerAdapter.java,v 1.6 2008/01/17 05:04:53 mjc Exp $
+ * $Id$
  */
 package com.sleepycat.db;
 import com.sleepycat.db.EventHandler;
@@ -33,15 +33,35 @@ public abstract class EventHandlerAdapter implements EventHandler {
     */
     public void handleRepClientEvent() {}
     /**
+    See {@link com.sleepycat.db.EventHandler#handleRepDupmasterEvent EventHandler.handleRepDupmasterEvent} for details of this
+    callback.
+    */
+    public void handleRepDupmasterEvent() {}
+    /**
     See {@link com.sleepycat.db.EventHandler#handleRepElectedEvent EventHandler.handleRepElectedEvent} for details of this
     callback.
     */
     public void handleRepElectedEvent() {}
     /**
+    See {@link com.sleepycat.db.EventHandler#handleRepElectionFailedEvent EventHandler.handleRepElectionFailedEvent} for details of this
+    callback.
+    */
+    public void handleRepElectionFailedEvent() {}
+    /**
+    See {@link com.sleepycat.db.EventHandler#handleRepJoinFailureEvent EventHandler.handleRepJoinFailureEvent} for details of this
+    callback.
+    */
+    public void handleRepJoinFailureEvent() {}
+    /**
     See {@link com.sleepycat.db.EventHandler#handleRepMasterEvent EventHandler.handleRepMasterEvent} for details of this
     callback.
     */
     public void handleRepMasterEvent() {}
+    /**
+    See {@link com.sleepycat.db.EventHandler#handleRepMasterFailureEvent EventHandler.handleRepMasterFailureEvent} for details of this
+    callback.
+    */
+    public void handleRepMasterFailureEvent() {}
     /**
     See {@link com.sleepycat.db.EventHandler#handleRepNewMasterEvent EventHandler.handleRepNewMasterEvent} for details of this
     callback.

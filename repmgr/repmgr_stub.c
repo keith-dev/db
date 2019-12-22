@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: repmgr_stub.c,v 1.9 2008/01/08 20:58:48 bostic Exp $
+ * $Id$
  */
 
 #ifndef HAVE_REPLICATION_THREADS

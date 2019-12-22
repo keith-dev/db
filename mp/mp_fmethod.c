@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: mp_fmethod.c,v 12.25 2008/05/05 17:47:01 sue Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -41,8 +41,14 @@ __memp_fcreate_pp(dbenv, retp, flags)
 	if ((ret = __db_fchk(env, "DB_ENV->memp_fcreate", flags, 0)) != 0)
 		return (ret);
 
+	if (REP_ON(env)) {
+		__db_errx(env,
+  "DB_ENV->memp_fcreate: method not permitted when replication is configured");
+		return (EINVAL);
+	}
+
 	ENV_ENTER(env, ip);
-	REPLICATION_WRAP(env, (__memp_fcreate(env, retp)), 0, ret);
+	ret = __memp_fcreate(env, retp);
 	ENV_LEAVE(env, ip);
 	return (ret);
 }
@@ -324,10 +330,10 @@ __memp_get_maxsize(dbmfp, gbytesp, bytesp)
 
 		MUTEX_LOCK(env, mfp->mutex);
 		*gbytesp = (u_int32_t)
-		    (mfp->maxpgno / (GIGABYTE / mfp->stat.st_pagesize));
+		    (mfp->maxpgno / (GIGABYTE / mfp->pagesize));
 		*bytesp = (u_int32_t)
-		    ((mfp->maxpgno % (GIGABYTE / mfp->stat.st_pagesize)) *
-		    mfp->stat.st_pagesize);
+		    ((mfp->maxpgno % (GIGABYTE / mfp->pagesize)) *
+		    mfp->pagesize);
 		MUTEX_UNLOCK(env, mfp->mutex);
 	}
 
@@ -354,10 +360,9 @@ __memp_set_maxsize(dbmfp, gbytes, bytes)
 
 		MUTEX_LOCK(env, mfp->mutex);
 		mfp->maxpgno = (db_pgno_t)
-		    (gbytes * (GIGABYTE / mfp->stat.st_pagesize));
+		    (gbytes * (GIGABYTE / mfp->pagesize));
 		mfp->maxpgno += (db_pgno_t)
-		    ((bytes + mfp->stat.st_pagesize - 1) /
-		    mfp->stat.st_pagesize);
+		    ((bytes + mfp->pagesize - 1) / mfp->pagesize);
 		MUTEX_UNLOCK(env, mfp->mutex);
 	}
 

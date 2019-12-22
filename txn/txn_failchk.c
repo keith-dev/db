@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2005,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: txn_failchk.c,v 12.11 2008/01/08 20:59:00 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -55,10 +55,12 @@ retry:	TXN_SYSTEM_LOCK(env);
 		if (dbenv->is_alive(dbenv, td->pid, td->tid, 0))
 			continue;
 
-		if (F_ISSET(td, TXN_DTL_INMEMORY))
+		if (F_ISSET(td, TXN_DTL_INMEMORY)) {
+			TXN_SYSTEM_UNLOCK(env);
 			return (__db_failed(env,
 			     "Transaction has in memory logs",
 			     td->pid, td->tid));
+		}
 
 		/* Abort the transaction. */
 		TXN_SYSTEM_UNLOCK(env);
@@ -79,7 +81,9 @@ retry:	TXN_SYSTEM_LOCK(env);
 				return (ret);
 			F_SET(ktxn, TXN_MALLOC);
 			ktxn->parent = txn;
-			TAILQ_INSERT_HEAD(&txn->kids, txn, klinks);
+			ktxn->mgrp = txn->mgrp;
+			TAILQ_INSERT_TAIL(&mgr->txn_chain, ktxn, links);
+			TAILQ_INSERT_HEAD(&txn->kids, ktxn, klinks);
 		}
 		TAILQ_INSERT_TAIL(&mgr->txn_chain, txn, links);
 		pid = td->pid;

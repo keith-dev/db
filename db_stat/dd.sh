@@ -1,5 +1,6 @@
 #! /bin/sh
-#	$Id: dd.sh,v 12.1 2006/08/30 16:11:57 bostic Exp $
+#
+# Copyright (c) 2010 Oracle and/or its affiliates.  All rights reserved.
 #
 # Display environment's deadlocks based on "db_stat -Co" output.
 

@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: mp_stat.c,v 12.43 2008/01/08 20:58:42 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -11,7 +11,6 @@
 #include "db_int.h"
 #include "dbinc/db_page.h"
 #include "dbinc/db_am.h"
-#include "dbinc/log.h"
 #include "dbinc/mp.h"
 #include "dbinc/txn.h"
 
@@ -84,9 +83,9 @@ __memp_stat(env, gspp, fspp, flags)
 	DB_MPOOL_STAT *sp;
 	MPOOL *c_mp, *mp;
 	size_t len;
-	u_int32_t i, st_bytes, st_gbytes, st_hash_buckets, st_pages;
-	u_int32_t tmp_wait, tmp_nowait;
 	int ret;
+	u_int32_t i;
+	uintmax_t tmp_wait, tmp_nowait;
 
 	dbmp = env->mp_handle;
 	mp = dbmp->reginfo[0].primary;
@@ -105,11 +104,13 @@ __memp_stat(env, gspp, fspp, flags)
 		 * a per-cache basis.  Note that configuration information
 		 * may be modified at any time, and so we have to lock.
 		 */
-		sp->st_gbytes = mp->stat.st_gbytes;
-		sp->st_bytes = mp->stat.st_bytes;
+		sp->st_gbytes = mp->gbytes;
+		sp->st_bytes = mp->bytes;
+		sp->st_pagesize = mp->pagesize;
 		sp->st_ncache = mp->nreg;
 		sp->st_max_ncache = mp->max_nreg;
 		sp->st_regsize = dbmp->reginfo[0].rp->size;
+		sp->st_sync_interrupted = mp->stat.st_sync_interrupted;
 
 		MPOOL_SYSTEM_LOCK(env);
 		sp->st_mmapsize = mp->mp_mmapsize;
@@ -131,7 +132,7 @@ __memp_stat(env, gspp, fspp, flags)
 			sp->st_ro_evict += c_mp->stat.st_ro_evict;
 			sp->st_rw_evict += c_mp->stat.st_rw_evict;
 			sp->st_page_trickle += c_mp->stat.st_page_trickle;
-			sp->st_pages += c_mp->stat.st_pages;
+			sp->st_pages += c_mp->pages;
 			/*
 			 * st_page_dirty	calculated by __memp_stat_hash
 			 * st_page_clean	calculated here
@@ -139,7 +140,7 @@ __memp_stat(env, gspp, fspp, flags)
 			__memp_stat_hash(
 			    &dbmp->reginfo[i], c_mp, &sp->st_page_dirty);
 			sp->st_page_clean = sp->st_pages - sp->st_page_dirty;
-			sp->st_hash_buckets += c_mp->stat.st_hash_buckets;
+			sp->st_hash_buckets += c_mp->htab_buckets;
 			sp->st_hash_searches += c_mp->stat.st_hash_searches;
 			sp->st_hash_longest += c_mp->stat.st_hash_longest;
 			sp->st_hash_examined += c_mp->stat.st_hash_examined;
@@ -169,17 +170,7 @@ __memp_stat(env, gspp, fspp, flags)
 				if (!LF_ISSET(DB_STAT_SUBSYSTEM))
 					__mutex_clear(env, c_mp->mtx_region);
 
-				MPOOL_SYSTEM_LOCK(env);
-				st_bytes = c_mp->stat.st_bytes;
-				st_gbytes = c_mp->stat.st_gbytes;
-				st_hash_buckets = c_mp->stat.st_hash_buckets;
-				st_pages = c_mp->stat.st_pages;
 				memset(&c_mp->stat, 0, sizeof(c_mp->stat));
-				c_mp->stat.st_bytes = st_bytes;
-				c_mp->stat.st_gbytes = st_gbytes;
-				c_mp->stat.st_hash_buckets = st_hash_buckets;
-				c_mp->stat.st_pages = st_pages;
-				MPOOL_SYSTEM_UNLOCK(env);
 			}
 		}
 
@@ -241,7 +232,6 @@ __memp_file_stats(env, mfp, argp, countp, flags)
 	u_int32_t flags;
 {
 	DB_MPOOL_STAT *sp;
-	u_int32_t pagesize;
 
 	COMPQUIET(env, NULL);
 	COMPQUIET(countp, NULL);
@@ -254,11 +244,9 @@ __memp_file_stats(env, mfp, argp, countp, flags)
 	sp->st_page_create += mfp->stat.st_page_create;
 	sp->st_page_in += mfp->stat.st_page_in;
 	sp->st_page_out += mfp->stat.st_page_out;
-	if (LF_ISSET(DB_STAT_CLEAR)) {
-		pagesize = mfp->stat.st_pagesize;
+	if (LF_ISSET(DB_STAT_CLEAR))
 		memset(&mfp->stat, 0, sizeof(mfp->stat));
-		mfp->stat.st_pagesize = pagesize;
-	}
+
 	return (0);
 }
 
@@ -307,7 +295,6 @@ __memp_get_files(env, mfp, argp, countp, flags)
 	DB_MPOOL_FSTAT **tfsp, *tstruct;
 	char *name, *tname;
 	size_t nlen;
-	u_int32_t pagesize;
 
 	if (*countp == 0)
 		return (0);
@@ -332,14 +319,15 @@ __memp_get_files(env, mfp, argp, countp, flags)
 	*tstruct = mfp->stat;
 	tstruct->file_name = tname;
 
+	/* Grab the pagesize from the mfp. */
+	tstruct->st_pagesize = mfp->pagesize;
+
 	*(DB_MPOOL_FSTAT ***)argp = tfsp;
 	(*countp)--;
 
-	if (LF_ISSET(DB_STAT_CLEAR)) {
-		pagesize = mfp->stat.st_pagesize;
+	if (LF_ISSET(DB_STAT_CLEAR))
 		memset(&mfp->stat, 0, sizeof(mfp->stat));
-		mfp->stat.st_pagesize = pagesize;
-	}
+
 	return (0);
 }
 
@@ -464,6 +452,8 @@ __memp_print_stats(env, flags)
 	    (u_long)gsp->st_page_dirty);
 	__db_dl(env, "Number of hash buckets used for page location",
 	    (u_long)gsp->st_hash_buckets);
+	__db_dl(env, "Assumed page size used",
+	    (u_long)gsp->st_pagesize);
 	__db_dl(env,
 	    "Total number of times hash chains searched for a page",
 	    (u_long)gsp->st_hash_searches);
@@ -502,6 +492,8 @@ __memp_print_stats(env, flags)
 	__db_dl(env, "The max number of pages examined for an allocation",
 	    (u_long)gsp->st_alloc_max_pages);
 	__db_dl(env, "Threads waited on page I/O", (u_long)gsp->st_io_wait);
+	__db_dl(env, "The number of times a sync is interrupted",
+	    (u_long)gsp->st_sync_interrupted);
 
 	for (tfsp = fsp; fsp != NULL && *tfsp != NULL; ++tfsp) {
 		if (LF_ISSET(DB_STAT_ALL))
@@ -600,10 +592,10 @@ __memp_print_all(env, flags)
 	__db_msg(env, "%s", DB_GLOBAL(db_line));
 	__db_msg(env, "MPOOLFILE structures:");
 	cnt = 0;
-	if ((ret = __memp_walk_files(env,
-	     mp, __memp_print_files, fmap, &cnt, flags)) != 0)
-		return (ret);
+	ret = __memp_walk_files(env, mp, __memp_print_files, fmap, &cnt, flags);
 	MPOOL_SYSTEM_UNLOCK(env);
+	if (ret != 0)
+		return (ret);
 
 	if (cnt < FMAP_ENTRIES)
 		fmap[cnt] = INVALID_ROFF;
@@ -614,6 +606,8 @@ __memp_print_all(env, flags)
 	for (i = 0; i < mp->nreg; ++i) {
 		__db_msg(env, "%s", DB_GLOBAL(db_line));
 		__db_msg(env, "Cache #%d:", i + 1);
+		if (i > 0)
+			__env_alloc_print(&dbmp->reginfo[i], flags);
 		if ((ret = __memp_print_hash(
 		    env, dbmp, &dbmp->reginfo[i], fmap, flags)) != 0)
 			break;
@@ -653,6 +647,7 @@ __memp_print_files(env, mfp, argp, countp, flags)
 	__mutex_print_debug_single(env, "Mutex", mfp->mutex, flags);
 
 	MUTEX_LOCK(env, mfp->mutex);
+	STAT_ULONG("Revision count", mfp->revision);
 	STAT_ULONG("Reference count", mfp->mpf_cnt);
 	STAT_ULONG("Block count", mfp->block_cnt);
 	STAT_ULONG("Last page number", mfp->last_pgno);
@@ -713,12 +708,12 @@ __memp_print_hash(env, dbmp, reginfo, fmap, flags)
 
 	for (hp = R_ADDR(reginfo, c_mp->htab),
 	    bucket = 0; bucket < c_mp->htab_buckets; ++hp, ++bucket) {
-		MUTEX_LOCK(env, hp->mtx_hash);
+		MUTEX_READLOCK(env, hp->mtx_hash);
 		if ((bhp = SH_TAILQ_FIRST(&hp->hash_bucket, __bh)) != NULL) {
 			__db_msgadd(env, &mb,
 			    "bucket %lu: %lu (%lu dirty)",
 			    (u_long)bucket, (u_long)hp->hash_io_wait,
-			    (u_long)hp->hash_page_dirty);
+			    (u_long)atomic_read(&hp->hash_page_dirty));
 			if (hp->hash_frozen != 0)
 				__db_msgadd(env, &mb, "(MVCC %lu/%lu/%lu) ",
 				    (u_long)hp->hash_frozen,
@@ -762,10 +757,11 @@ __memp_print_bh(env, dbmp, prefix, bhp, fmap)
 		{ BH_DIRTY,		"dirty" },
 		{ BH_DIRTY_CREATE,	"created" },
 		{ BH_DISCARD,		"discard" },
+		{ BH_EXCLUSIVE,		"exclusive" },
 		{ BH_FREED,		"freed" },
 		{ BH_FROZEN,		"frozen" },
-		{ BH_LOCKED,		"locked" },
 		{ BH_TRASH,		"trash" },
+		{ BH_THAWED,		"thawed" },
 		{ 0,			NULL }
 	};
 	DB_MSGBUF mb;
@@ -789,14 +785,14 @@ __memp_print_bh(env, dbmp, prefix, bhp, fmap)
 		__db_msgadd(
 		    env, &mb, "%5lu, #%d, ", (u_long)bhp->pgno, i + 1);
 
-	__db_msgadd(env, &mb, "%2lu%s, %lu/%lu", (u_long)bhp->ref,
-	    bhp->ref_sync == 0 ? "" : " (sync-lock)",
+	__db_msgadd(env, &mb, "%2lu, %lu/%lu", (u_long)atomic_read(&bhp->ref),
 	    F_ISSET(bhp, BH_FROZEN) ? 0 : (u_long)LSN(bhp->buf).file,
 	    F_ISSET(bhp, BH_FROZEN) ? 0 : (u_long)LSN(bhp->buf).offset);
 	if (bhp->td_off != INVALID_ROFF)
-		__db_msgadd(env, &mb, " (@%lu/%lu)",
+		__db_msgadd(env, &mb, " (@%lu/%lu 0x%x)",
 		    (u_long)VISIBLE_LSN(env, bhp)->file,
-		    (u_long)VISIBLE_LSN(env, bhp)->offset);
+		    (u_long)VISIBLE_LSN(env, bhp)->offset,
+		    BH_OWNER(env, bhp)->txnid);
 	__db_msgadd(env, &mb, ", %#08lx, %lu",
 	    (u_long)R_OFFSET(dbmp->reginfo, bhp), (u_long)bhp->priority);
 	__db_prflags(env, &mb, bhp->flags, fn, " (", ")");
@@ -816,7 +812,8 @@ __memp_stat_wait(env, reginfo, mp, mstat, flags)
 	u_int32_t flags;
 {
 	DB_MPOOL_HASH *hp;
-	u_int32_t i, tmp_nowait, tmp_wait;
+	u_int32_t i;
+	uintmax_t tmp_nowait, tmp_wait;
 
 	mstat->st_hash_max_wait = 0;
 	hp = R_ADDR(reginfo, mp->htab);
@@ -890,6 +887,6 @@ __memp_stat_hash(reginfo, mp, dirtyp)
 
 	hp = R_ADDR(reginfo, mp->htab);
 	for (i = 0, dirty = 0; i < mp->htab_buckets; i++, hp++)
-		dirty += hp->hash_page_dirty;
+		dirty += (u_int32_t)atomic_read(&hp->hash_page_dirty);
 	*dirtyp = dirty;
 }

@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2001,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2001, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: db_truncate.c,v 12.30 2008/03/18 17:13:16 mbrey Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -14,9 +14,11 @@
 #include "dbinc/hash.h"
 #include "dbinc/qam.h"
 #include "dbinc/lock.h"
-#include "dbinc/log.h"
+#include "dbinc/partition.h"
 #include "dbinc/txn.h"
 
+static int __db_cursor_check_func
+    __P((DBC *, DBC *, u_int32_t *, db_pgno_t, u_int32_t, void *));
 static int __db_cursor_check __P((DB *));
 
 /*
@@ -138,7 +140,7 @@ __db_truncate(dbp, ip, txn, countp)
 	 * returned is the count of the primary only.  QUEUE uses normal
 	 * processing to truncate so it will update the secondaries normally.
 	 */
-	if (dbp->type != DB_QUEUE && LIST_FIRST(&dbp->s_secondaries) != NULL) {
+	if (dbp->type != DB_QUEUE && DB_IS_PRIMARY(dbp)) {
 		if ((ret = __db_s_first(dbp, &sdbp)) != 0)
 			return (ret);
 		for (; sdbp != NULL && ret == 0; ret = __db_s_next(&sdbp, txn))
@@ -157,7 +159,11 @@ __db_truncate(dbp, ip, txn, countp)
 		return (ret);
 
 	DEBUG_LWRITE(dbc, txn, "DB->truncate", NULL, NULL, 0);
-
+#ifdef HAVE_PARTITION
+	if (DB_IS_PARTITIONED(dbp))
+		ret = __part_truncate(dbc, countp);
+	else
+#endif
 	switch (dbp->type) {
 	case DB_BTREE:
 	case DB_RECNO:
@@ -186,6 +192,24 @@ DB_TEST_RECOVERY_LABEL
 	return (ret);
 }
 
+static int
+__db_cursor_check_func(dbc, my_dbc, foundp, pgno, indx, args)
+	DBC *dbc, *my_dbc;
+	u_int32_t *foundp;
+	db_pgno_t pgno;
+	u_int32_t indx;
+	void *args;
+{
+	COMPQUIET(my_dbc, NULL);
+	COMPQUIET(args, NULL);
+	COMPQUIET(pgno, 0);
+	COMPQUIET(indx, 0);
+	if (IS_INITIALIZED(dbc)) {
+		*foundp = 1;
+		return (EEXIST);
+	}
+	return (0);
+}
 /*
  * __db_cursor_check --
  *	See if there are any active cursors on this db.
@@ -194,27 +218,10 @@ static int
 __db_cursor_check(dbp)
 	DB *dbp;
 {
-	DB *ldbp;
-	DBC *dbc;
-	ENV *env;
-	int found;
+	int ret;
+	u_int32_t found;
 
-	env = dbp->env;
-
-	MUTEX_LOCK(env, env->mtx_dblist);
-	FIND_FIRST_DB_MATCH(env, dbp, ldbp);
-	for (found = 0;
-	    !found && ldbp != NULL && ldbp->adj_fileid == dbp->adj_fileid;
-	    ldbp = TAILQ_NEXT(ldbp, dblistlinks)) {
-		MUTEX_LOCK(env, dbp->mutex);
-		TAILQ_FOREACH(dbc, &ldbp->active_queue, links)
-			if (IS_INITIALIZED(dbc)) {
-				found = 1;
-				break;
-			}
-		MUTEX_UNLOCK(env, dbp->mutex);
-	}
-	MUTEX_UNLOCK(env, env->mtx_dblist);
-
-	return (found ? EINVAL : 0);
+	ret = __db_walk_cursors(dbp, NULL,
+	    __db_cursor_check_func, &found, 0, 0, NULL);
+	return (ret == EEXIST ? EINVAL : ret);
 }

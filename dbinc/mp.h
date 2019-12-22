@@ -1,13 +1,15 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: mp.h,v 12.45 2008/03/10 13:28:01 mjc Exp $
+ * $Id$
  */
 
 #ifndef	_DB_MP_H_
 #define	_DB_MP_H_
+
+#include "dbinc/atomic.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -142,6 +144,9 @@ struct __mpool {
 
 	/* Configuration information: protected by the region lock. */
 	u_int32_t max_nreg;		/* Maximum number of regions. */
+	u_int32_t gbytes;		/* Number of gigabytes in cache. */
+	u_int32_t bytes;		/* Number of bytes in cache. */
+	u_int32_t pagesize;		/* Default page size. */
 	size_t    mp_mmapsize;		/* Maximum file size for mmap. */
 	int       mp_maxopenfd;		/* Maximum open file descriptors. */
 	int       mp_maxwrite;		/* Maximum buffers to write. */
@@ -181,11 +186,15 @@ struct __mpool {
 	u_int32_t lru_count;		/* Counter for buffer LRU. */
 	int32_t   lru_reset;		/* Hash bucket lru reset point. */
 
+	 /*
+	  * The pages field keeps track of the number of pages in the cache
+	  * and is protected by the region lock.  It is accessed for reading
+	  * without the lock to return statistics.
+	  */
+	u_int32_t pages;		/* Number of pages in the cache. */
+
 	/*
-	 * The stat fields are generally not thread protected, and cannot be
-	 * trusted.  Note that st_pages is an exception, and is always updated
-	 * inside a region lock (although it is sometimes read outside of the
-	 * region lock).
+	 * The stat fields are not thread protected, and cannot be trusted.
 	 */
 	DB_MPOOL_STAT stat;		/* Per-cache mpool statistics. */
 
@@ -247,7 +256,7 @@ struct __mpool {
  *	 hash bucket.  Use a nearby prime instead.
  */
 #define	MP_HASH(mf_offset, pgno)					\
-	((((pgno) << 8) ^ (pgno)) ^ ((mf_offset) * 509))
+	((((pgno) << 8) ^ (pgno)) ^ (((u_int32_t) mf_offset) * 509))
 
 /*
  * Inline the calculation of the mask, since we can't reliably store the mask
@@ -288,18 +297,17 @@ struct __mpool {
 		*(infopp) = &__t_dbmp->reginfo[0];			\
 	} else								\
 		ret = __memp_get_bucket((dbmfp)->env,			\
-		    (dbmfp)->mfp, (pgno), (infopp), NULL);		\
+		    (dbmfp)->mfp, (pgno), (infopp), NULL, NULL);	\
 } while (0)
 
 /*
  * MP_GET_BUCKET --
  *	Select and lock the bucket for a given page.
  */
-#define	MP_GET_BUCKET(env, mfp, pgno, infopp, hp, ret) do {		\
+#define	MP_GET_BUCKET(env, mfp, pgno, infopp, hp, bucket, ret) do {	\
 	DB_MPOOL *__t_dbmp;						\
 	MPOOL *__t_mp;							\
 	roff_t __t_mf_offset;						\
-	u_int32_t __t_bucket;						\
 									\
 	__t_dbmp = (env)->mp_handle;					\
 	__t_mp = __t_dbmp->reginfo[0].primary;				\
@@ -307,23 +315,22 @@ struct __mpool {
 		*(infopp) = &__t_dbmp->reginfo[0];			\
 		__t_mf_offset = R_OFFSET(*(infopp), (mfp));		\
 		MP_BUCKET(__t_mf_offset,				\
-		    (pgno), __t_mp->nbuckets, __t_bucket);		\
+		    (pgno), __t_mp->nbuckets, bucket);		\
 		(hp) = R_ADDR(*(infopp), __t_mp->htab);			\
-		(hp) = &(hp)[__t_bucket];				\
-		MUTEX_LOCK(env, (hp)->mtx_hash);			\
+		(hp) = &(hp)[bucket];				\
+		MUTEX_READLOCK(env, (hp)->mtx_hash);			\
 		ret = 0;						\
 	} else								\
-		ret = __memp_get_bucket((env), 				\
-		    (mfp), (pgno), (infopp), &(hp));			\
+		ret = __memp_get_bucket((env),				\
+		    (mfp), (pgno), (infopp), &(hp), &(bucket));		\
 } while (0)
 
 struct __db_mpool_hash {
 	db_mutex_t	mtx_hash;	/* Per-bucket mutex. */
-	db_mutex_t	mtx_io;		/* Buffer I/O mutex. */
 
 	DB_HASHTAB	hash_bucket;	/* Head of bucket. */
 
-	u_int32_t	hash_page_dirty;/* Count of dirty pages. */
+	db_atomic_t	hash_page_dirty;/* Count of dirty pages. */
 
 #ifndef __TEST_DB_NO_STATISTICS
 	u_int32_t	hash_io_wait;	/* Count of I/O waits. */
@@ -334,7 +341,6 @@ struct __db_mpool_hash {
 
 	DB_LSN		old_reader;	/* Oldest snapshot reader (cached). */
 
-#define	IO_WAITER	0x001		/* Thread is waiting on page. */
 	u_int32_t	flags;
 };
 
@@ -364,6 +370,7 @@ struct __mpoolfile {
 	db_mutex_t mutex;		/* MPOOLFILE mutex. */
 
 	/* Protected by MPOOLFILE mutex. */
+	u_int32_t revision;		/* Bumped on any movement subdbs. */
 	u_int32_t mpf_cnt;		/* Ref count: DB_MPOOLFILEs. */
 	u_int32_t block_cnt;		/* Ref count: blocks in cache. */
 	db_pgno_t last_pgno;		/* Last page in the file. */
@@ -452,6 +459,7 @@ struct __mpoolfile {
 
 	roff_t	  fileid_off;		/* File ID string location. */
 
+	u_int32_t pagesize;		/* Underlying pagesize. */
 	roff_t	  pgcookie_len;		/* Pgin/pgout cookie length. */
 	roff_t	  pgcookie_off;		/* Pgin/pgout cookie location. */
 
@@ -483,16 +491,17 @@ struct __mpoolfile {
  *	Buffer header.
  */
 struct __bh {
-	u_int16_t	ref;		/* Reference count. */
-	u_int16_t	ref_sync;	/* Sync wait-for reference count. */
+	db_mutex_t	mtx_buf;	/* Shared/Exclusive mutex */
+	db_atomic_t	ref;		/* Reference count. */
+#define	BH_REFCOUNT(bhp)	atomic_read(&(bhp)->ref)
 
 #define	BH_CALLPGIN	0x001		/* Convert the page before use. */
 #define	BH_DIRTY	0x002		/* Page is modified. */
 #define	BH_DIRTY_CREATE	0x004		/* Page is modified. */
 #define	BH_DISCARD	0x008		/* Page is useless. */
-#define	BH_FREED	0x010		/* Page was freed. */
-#define	BH_FROZEN	0x020		/* Frozen buffer: allocate & re-read. */
-#define	BH_LOCKED	0x040		/* Page is locked (I/O in progress). */
+#define	BH_EXCLUSIVE	0x010		/* Exclusive access acquired. */
+#define	BH_FREED	0x020		/* Page was freed. */
+#define	BH_FROZEN	0x040		/* Frozen buffer: allocate & re-read. */
 #define	BH_TRASH	0x080		/* Page is garbage. */
 #define	BH_THAWED	0x100		/* Page was thawed. */
 	u_int16_t	flags;
@@ -502,6 +511,8 @@ struct __bh {
 
 	db_pgno_t	pgno;		/* Underlying MPOOLFILE page number. */
 	roff_t		mf_offset;	/* Associated MPOOLFILE offset. */
+	u_int32_t	bucket;		/* Hash bucket containing header. */
+	int		region;		/* Region containing header. */
 
 	roff_t		td_off;		/* MVCC: creating TXN_DETAIL offset. */
 	SH_CHAIN_ENTRY	vc;		/* MVCC: version chain. */
@@ -539,8 +550,12 @@ struct __bh_frozen_a {
 };
 
 #define	MULTIVERSION(dbp)	((dbp)->mpf->mfp->multiversion)
+#define	IS_PINNED(p)							\
+    (BH_REFCOUNT((BH *)((u_int8_t *)					\
+    (p) - SSZA(BH, buf))) > 0)
 #define	IS_DIRTY(p)							\
-    F_ISSET((BH *)((u_int8_t *)(p) - SSZA(BH, buf)), BH_DIRTY)
+    (F_ISSET((BH *)((u_int8_t *)					\
+    (p) - SSZA(BH, buf)), BH_DIRTY|BH_EXCLUSIVE) == (BH_DIRTY|BH_EXCLUSIVE))
 
 #define	BH_OWNER(env, bhp)						\
     ((TXN_DETAIL *)R_ADDR(&env->tx_handle->reginfo, bhp->td_off))
@@ -548,10 +563,6 @@ struct __bh_frozen_a {
 #define	BH_OWNED_BY(env, bhp, txn)	((txn) != NULL &&		\
     (bhp)->td_off != INVALID_ROFF &&					\
     (txn)->td == BH_OWNER(env, bhp))
-
-#define	BH_PRIORITY(bhp)						\
-    (SH_CHAIN_SINGLETON(bhp, vc) ? (bhp)->priority :			\
-     __memp_bh_priority(bhp))
 
 #define	VISIBLE_LSN(env, bhp)						\
     (&BH_OWNER(env, bhp)->visible_lsn)
@@ -576,43 +587,38 @@ struct __bh_frozen_a {
     BH_VISIBLE(env, SH_CHAIN_NEXTP(bhp, vc, __bh), &(old_lsn), vlsn) :\
     BH_VISIBLE(env, bhp, &(old_lsn), vlsn))
 
-#define	MVCC_SKIP_CURADJ(dbc, pgno)					\
-    (dbc->txn != NULL && F_ISSET(dbc->txn, TXN_SNAPSHOT) &&		\
+#define	MVCC_SKIP_CURADJ(dbc, pgno) (dbc->txn != NULL &&		\
+    F_ISSET(dbc->txn, TXN_SNAPSHOT) && MULTIVERSION(dbc->dbp) &&	\
     dbc->txn->td != NULL && __memp_skip_curadj(dbc, pgno))
 
 #if defined(DIAG_MVCC) && defined(HAVE_MPROTECT)
 #define	VM_PAGESIZE 4096
 #define	MVCC_BHSIZE(mfp, sz) do {					\
 	sz += VM_PAGESIZE + sizeof(BH);					\
-	if (mfp->stat.st_pagesize < VM_PAGESIZE)			\
-		sz += VM_PAGESIZE - mfp->stat.st_pagesize;		\
+	if (mfp->pagesize < VM_PAGESIZE)				\
+		sz += VM_PAGESIZE - mfp->pagesize;			\
 } while (0)
 
-#define	MVCC_BHALIGN(mfp, p) do {					\
-	if (mfp != NULL) {						\
-		BH *__bhp;						\
-		void *__orig = (p);					\
-		p = ALIGNP_INC(p, VM_PAGESIZE);				\
-		if ((u_int8_t *)p < (u_int8_t *)__orig + sizeof(BH))	\
-			p = (u_int8_t *)p + VM_PAGESIZE;		\
-		__bhp = (BH *)((u_int8_t *)p - SSZA(BH, buf));		\
-		DB_ASSERT(env,					\
-		    ((uintptr_t)__bhp->buf & (VM_PAGESIZE - 1)) == 0);	\
-		DB_ASSERT(env,					\
-		    (u_int8_t *)__bhp >= (u_int8_t *)__orig);		\
-		DB_ASSERT(env, (u_int8_t *)p + mfp->stat.st_pagesize <\
-		    (u_int8_t *)__orig + len);				\
-		__bhp->align_off =					\
-		    (u_int16_t)((u_int8_t *)__bhp - (u_int8_t *)__orig);\
-		p = __bhp;						\
-	}								\
+#define	MVCC_BHALIGN(p) do {						\
+	BH *__bhp;							\
+	void *__orig = (p);						\
+	p = ALIGNP_INC(p, VM_PAGESIZE);					\
+	if ((u_int8_t *)p < (u_int8_t *)__orig + sizeof(BH))		\
+		p = (u_int8_t *)p + VM_PAGESIZE;			\
+	__bhp = (BH *)((u_int8_t *)p - SSZA(BH, buf));			\
+	DB_ASSERT(env,							\
+	    ((uintptr_t)__bhp->buf & (VM_PAGESIZE - 1)) == 0);		\
+	DB_ASSERT(env,							\
+	    (u_int8_t *)__bhp >= (u_int8_t *)__orig);			\
+	DB_ASSERT(env, (u_int8_t *)p + mfp->pagesize <			\
+	    (u_int8_t *)__orig + len);					\
+	__bhp->align_off =						\
+	    (u_int16_t)((u_int8_t *)__bhp - (u_int8_t *)__orig);	\
+	p = __bhp;							\
 } while (0)
 
-#define	MVCC_BHUNALIGN(mfp, p) do {					\
-	if ((mfp) != NULL) {						\
-		BH *bhp = (BH *)(p);					\
-		(p) = ((u_int8_t *)bhp - bhp->align_off);		\
-	}								\
+#define	MVCC_BHUNALIGN(bhp) do {					\
+	(bhp) = (BH *)((u_int8_t *)(bhp) - (bhp)->align_off);		\
 } while (0)
 
 #ifdef linux
@@ -631,8 +637,8 @@ struct __bh_frozen_a {
 
 #else /* defined(DIAG_MVCC) && defined(HAVE_MPROTECT) */
 #define	MVCC_BHSIZE(mfp, sz) do {} while (0)
-#define	MVCC_BHALIGN(mfp, p) do {} while (0)
-#define	MVCC_BHUNALIGN(mfp, p) do {} while (0)
+#define	MVCC_BHALIGN(p) do {} while (0)
+#define	MVCC_BHUNALIGN(bhp) do {} while (0)
 #define	MVCC_MPROTECT(buf, size, mode) do {} while (0)
 #endif
 

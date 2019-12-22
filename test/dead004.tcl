@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 1996,2008 Oracle.  All rights reserved.
+# Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: dead004.tcl,v 12.6 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # Deadlock Test 4.
 # This test is designed to make sure that we handle youngest and oldest
@@ -68,6 +68,12 @@ proc dead004 { {tnum "004"} } {
 		for { set i 0 } { $i < $n } { incr i } {
 			set did [open $testdir/dead$tnum.log.$i]
 			while { [gets $did val] != -1 } {
+				# If the line comes from the 
+				# profiling tool, ignore it. 
+				if { [string first \
+				    "profiling:" $val] == 0 } { 
+					continue
+				}
 				switch $val {
 					DEADLOCK { incr dead }
 					1 { incr clean }

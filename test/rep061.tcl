@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 2004,2008 Oracle.  All rights reserved.
+# Copyright (c) 2004, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: rep061.tcl,v 1.14 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	rep061
 # TEST	Test of internal initialization multiple files and pagesizes
@@ -18,10 +18,8 @@
 proc rep061 { method { niter 500 } { tnum "061" } args } {
 
 	source ./include.tcl
-	if { $is_windows9x_test == 1 } {
-		puts "Skipping replication test on Win 9x platform."
-		return
-	}
+	global databases_in_memory
+	global repfiles_in_memory
 
 	# Run for btree and queue only.
 	if { $checking_valid_methods } {
@@ -48,6 +46,22 @@ proc rep061 { method { niter 500 } { tnum "061" } args } {
 
 	set logsets [create_logsets 2]
 
+	# Set up for on-disk or in-memory databases.
+	set msg "using on-disk databases"
+	if { $databases_in_memory } {
+		set msg "using named in-memory databases"
+		if { [is_queueext $method] } { 
+			puts -nonewline "Skipping rep$tnum for method "
+			puts "$method with named in-memory databases."
+			return
+		}
+	}
+
+	set msg2 "and on-disk replication files"
+	if { $repfiles_in_memory } {
+		set msg2 "and in-memory replication files"
+	}
+
 	# Run the body of the test with and without recovery,
 	# and with and without cleaning.
 	set opts { noclean clean bulk }
@@ -68,7 +82,7 @@ proc rep061 { method { niter 500 } { tnum "061" } args } {
 					}
 					puts "Rep$tnum ($method $r $c):\
 					    Internal initialization - with\
-					    $d pct page gaps."
+					    $d pct page gaps, $msg $msg2."
 					puts "Rep$tnum: Master logs are \
 					    [lindex $l 0]"
 					puts "Rep$tnum: Client logs are \
@@ -85,13 +99,19 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	global testdir
 	global util_path
 	global drop drop_msg
-	global startup_done
+	global databases_in_memory
+	global repfiles_in_memory
 	global rep_verbose
 	global verbose_type
 
 	set verbargs ""
 	if { $rep_verbose == 1 } {
 		set verbargs " -verbose {$verbose_type on} "
+	}
+
+	set repmemargs ""
+	if { $repfiles_in_memory } {
+		set repmemargs "-rep_inmem_files "
 	}
 
 	env_cleanup $testdir
@@ -109,7 +129,10 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	# four times the size of the in-memory log buffer.
 	set maxpg 16384
 	set log_max [expr $maxpg * 8]
-	set cache [expr $maxpg * 32 ]
+	set cache [expr $maxpg * 32]
+	if { $repfiles_in_memory } {
+		set cache [expr ($maxpg * 32) + (3000 * 1024)]
+	}
 
 	set m_logtype [lindex $logset 0]
 	set c_logtype [lindex $logset 1]
@@ -121,6 +144,7 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	# Open a master.
 	repladd 1
 	set ma_envcmd "berkdb_env_noerr -create $m_txnargs $verbargs \
+	    $repmemargs \
 	    -log_max $log_max -cachesize { 0 $cache 1 } -errpfx MASTER \
 	    -home $masterdir -rep_transport \[list 1 replsend\]"
 	set masterenv [eval $ma_envcmd $recargs -rep_master]
@@ -128,6 +152,7 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	# Open a client
 	repladd 2
 	set cl_envcmd "berkdb_env_noerr -create $c_txnargs $verbargs \
+	    $repmemargs \
 	    -log_max $log_max -cachesize { 0 $cache 1 } -errpfx CLIENT \
 	    -home $clientdir -rep_transport \[list 2 replsend\]"
 	set clientenv [eval $cl_envcmd $recargs -rep_client]
@@ -141,7 +166,16 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	# Set to 200/800 usecs.  An average ping to localhost should
 	# be a few 10s usecs.
 	#
-	$clientenv rep_request 200 800
+	set conf [berkdb getconfig]
+	set small_rereq 1
+	if { [is_substr $conf "debug_rop"] && [is_queue $method] } {
+		set small_rereq 0
+	}
+	if { $small_rereq } {
+		$clientenv rep_request 200 800
+	} else {
+		$clientenv rep_request 20000 80000
+	}
 	# Bring the clients online by processing the startup messages.
 	set envlist "{$masterenv 1} {$clientenv 2}"
 	process_msgs $envlist
@@ -176,7 +210,7 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 		set pagesize [lindex $pglist $i]
 		set largs " -pagesize $pagesize "
 		eval rep_test $method $masterenv NULL $nentries $mult $mult \
-		    0 0 $largs
+		    0 $largs
 		process_msgs $envlist
 
 		#
@@ -185,16 +219,27 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 		#
 		set old "test.db"
 		set new "test.$i.db"
-		error_check_good rename [$masterenv dbrename \
-		    -auto_commit $old $new] 0
+
+		if { $databases_in_memory } {
+			error_check_good rename [$masterenv dbrename \
+			    -auto_commit "" $old $new] 0
+		} else {
+			error_check_good rename [$masterenv dbrename \
+			    -auto_commit $old $new] 0
+		}
 		process_msgs $envlist
+
 		#
 		# We want to keep some databases open so that we test the
 		# code finding the files in the data dir as well as finding
 		# them in dbreg list.
 		#
 		if { [expr $i % 2 ] == 0 } {
-			set db [berkdb_open_noerr -env $masterenv $new]
+			if { $databases_in_memory } {
+				set db [berkdb_open_noerr -env $masterenv "" $new]
+			} else {
+				set db [berkdb_open_noerr -env $masterenv $new]
+			}
 			error_check_good dbopen.$i [is_valid_db $db] TRUE
 			lappend dbopen $db
 		}
@@ -203,7 +248,14 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	# Set up a few special databases too.  We want one with a subdatabase
 	# and we want an empty database.
 	#
-	set testfile "test.db"
+	if { $databases_in_memory } {
+		set testfile { "" "test.db" }
+		set emptyfile { "" "empty.db" }
+	} else { 
+		set testfile "test.db"
+		set emptyfile "empty.db"
+	} 
+
 	if { [is_queue $method] } {
 		set sub ""
 	} else {
@@ -212,7 +264,7 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	set omethod [convert_method $method]
 	set largs " -pagesize $maxpg "
 	set largs [convert_args $method $largs]
-	set emptyfile "empty.db"
+
 	#
 	# Create/close an empty database.
 	#
@@ -220,14 +272,20 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	    -mode 0644} $largs $omethod $emptyfile]
 	error_check_good emptydb [is_valid_db $db] TRUE
 	error_check_good empty_close [$db close] 0
-	#
-	# Keep this subdb (regular if queue) database open.
+
+	# If we're not using in-mem named databases, open a subdb and keep 
+	# it open. (Do a regular db if method is queue.) 
 	# We need it a few times later on.
 	#
-	set db [eval {berkdb_open_noerr -env $masterenv -auto_commit -create \
-	    -mode 0644} $largs $omethod $testfile $sub]
+	if { $databases_in_memory } {
+		set db [eval {berkdb_open_noerr -env $masterenv -auto_commit\
+		    -create -mode 0644} $largs $omethod $testfile]
+	} else {
+		set db [eval {berkdb_open_noerr -env $masterenv -auto_commit\
+		    -create -mode 0644} $largs $omethod $testfile $sub]
+	}
 	error_check_good subdb [is_valid_db $db] TRUE
-	eval rep_test $method $masterenv $db $niter 0 0 0 0 $largs
+	eval rep_test $method $masterenv $db $niter 0 0 0 $largs
 	process_msgs $envlist
 
 	puts "\tRep$tnum.b: Close client."
@@ -241,7 +299,7 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	#
 	puts "\tRep$tnum.c: Running rep_test ( $largs) in replicated env."
 	set nentries [expr $niter * 2]
-	eval rep_test $method $masterenv $db $nentries 0 0 0 0 $largs
+	eval rep_test $method $masterenv $db $nentries 0 0 0 $largs
 	replclear 2
 
 	puts "\tRep$tnum.d: Run db_archive on master."
@@ -264,8 +322,14 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	#
 	# Since we are dropping frequent messages, we set the
 	# rerequest rate low to make sure the test finishes.
+	# Only do this for non-debug_rop because that generates
+	# so much traffic, it hangs the test with rerequests.
 	#
-	$clientenv rep_request 200 800
+	if { $small_rereq } {
+		$clientenv rep_request 200 800
+	} else {
+		$clientenv rep_request 20000 80000
+	}
 	set envlist "{$masterenv 1} {$clientenv 2}"
 	process_msgs $envlist 0 NONE err
 	set done 0
@@ -287,7 +351,11 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 		# loop more times to allow rerequests to get through.
 		#
 		set max_drop_iter [expr $max_drop_iter * 2]
-		$clientenv rep_request 100 400
+		if { $small_rereq } {
+			$clientenv rep_request 100 400
+		} else {
+			$clientenv rep_request 10000 40000
+		}
 	}
 	while { $done == 0 } {
 		puts "\tRep$tnum.e.1.$iter: Trigger log request"
@@ -298,13 +366,13 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 		# logs and that will trigger it.
 		#
 		set entries 4
-		eval rep_test $method $masterenv $db $entries $niter 0 0 0 $largs
+		eval rep_test $method $masterenv $db $entries $niter 0 0 $largs
 		process_msgs $envlist 0 NONE err
 		set stat [exec $util_path/db_stat -N -r -R A -h $clientdir]
 		#
-		# Loop until we are done with the RECOVER_PAGE phase.
+		# Loop until we are done with the SYNC_PAGE phase.
 		#
-		set in_page [is_substr $stat "REP_F_RECOVER_PAGE"]
+		set in_page [is_substr $stat "SYNC_PAGE"]
 		if { !$in_page || $iter >= $max_drop_iter } {
 			#
 			# If we're dropping, stop doing so.
@@ -322,9 +390,14 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	#
 	# Stop dropping records, we've sent all the pages.
 	# We need to do that in order to make sure we get
-	# all the log records there and can accurately compare.
+	# all the log records there and can accurately compare.  Also, make sure
+	# enough time has passed so that the client's rep_request timer has
+	# expired, and make sure there are any messages to send to the client,
+	# so that there is something to trigger any needed final rerequest.
 	#
 	set drop 0
+	tclsleep 2
+	$masterenv txn_checkpoint -force
 	process_msgs $envlist 0 NONE err
 
 	puts "\tRep$tnum.f: Verify logs and databases"
@@ -340,7 +413,7 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 		error_check_good bulk [$masterenv rep_config {bulk off}] 0
 		process_msgs $envlist 0 NONE err
 	}
-	rep_verify $masterdir $masterenv $clientdir $clientenv 1
+	rep_verify $masterdir $masterenv $clientdir $clientenv 1 1 1
 
 	for { set i 0 } { $i < $nfiles } { incr i } {
 		set dbname "test.$i.db"
@@ -361,11 +434,11 @@ proc rep061_sub { method niter tnum logset recargs opts dpct largs } {
 	set db [eval {berkdb_open_noerr -env $masterenv -auto_commit \
 	    -mode 0644} $largs $omethod $testfile $sub]
 	error_check_good subdb [is_valid_db $db] TRUE
-	eval rep_test $method $masterenv $db $entries $niter 0 0 0 $largs
+	eval rep_test $method $masterenv $db $entries $niter 0 0 $largs
 	error_check_good subdb_close [$db close] 0
 	process_msgs $envlist 0 NONE err
 
-	rep_verify $masterdir $masterenv $clientdir $clientenv 1
+	rep_verify $masterdir $masterenv $clientdir $clientenv 1 1 1
 	for { set i 0 } { $i < $nfiles } { incr i } {
 		set dbname "test.$i.db"
 		rep_verify $masterdir $masterenv $clientdir $clientenv \

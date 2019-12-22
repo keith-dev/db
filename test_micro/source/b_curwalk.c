@@ -1,5 +1,9 @@
 /*
- * $Id: b_curwalk.c,v 1.12 2008/02/05 20:43:41 bostic Exp $
+ * See the file LICENSE for redistribution information.
+ *
+ * Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
+ *
+ * $Id$
  */
 #include "bench.h"
 
@@ -122,7 +126,7 @@ b_curwalk(int argc, char *argv[])
 		DB_BENCH_ASSERT(
 		    dbp->set_flags(dbp, sorted ? DB_DUPSORT : DB_DUP) == 0);
 
-#if DB_VERSION_MAJOR >= 4 && DB_VERSION_MINOR >= 1
+#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 1)
 	DB_BENCH_ASSERT(dbp->open(
 	    dbp, NULL, TESTFILE, NULL, type, DB_CREATE, 0666) == 0);
 #else

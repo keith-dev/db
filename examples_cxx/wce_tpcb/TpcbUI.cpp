@@ -1,3 +1,11 @@
+/*-
+ * See the file LICENSE for redistribution information.
+ *
+ * Copyright (c) 2007, 2010 Oracle and/or its affiliates.  All rights reserved.
+ *
+ * $Id$
+ */
+
 // TpcbUI.cpp : Defines the entry point for the application.
 //
 

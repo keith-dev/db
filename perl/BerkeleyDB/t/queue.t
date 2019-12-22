@@ -7,12 +7,12 @@ use strict ;
 use lib 't' ;
 use BerkeleyDB; 
 use Test::More;
-use util(1) ;
+use util;
 
 plan(skip_all => "Queue needs Berkeley DB 3.3.x or better\n" )
     if $BerkeleyDB::db_version < 3.3;
     
-plan tests => 253;
+plan tests => 257;
 
 
 my $Dfile = "dbhash.tmp";
@@ -59,6 +59,7 @@ umask(0) ;
     # Add a k/v pair
     my $value ;
     my $status ;
+    is $db->Env, undef;
     ok $db->db_put(1, "some value") == 0  ;
     ok $db->status() == 0 ;
     ok $db->db_get(1, $value) == 0 ;
@@ -113,6 +114,8 @@ umask(0) ;
 				    -Flags    => DB_CREATE,
 				    -Len      => $rec_len;
 
+    isa_ok $db->Env, 'BerkeleyDB::Env';
+                    
     # Add a k/v pair
     my $value ;
     ok $db->db_put(1, "some value") == 0 ;
@@ -293,9 +296,12 @@ umask(0) ;
     ok (( $FA ? pop @array : $db->pop ) eq fillout("the", $rec_len)) ;
     ok (( $FA ? pop @array : $db->pop ) == 200)  ;
 
+    undef $cursor;
+
     # now clear the array 
     $FA ? @array = () 
         : $db->clear() ;
+    ok $cursor = (tied @array)->db_cursor() ;
     ok $cursor->c_get($k, $v, DB_FIRST) == DB_NOTFOUND ;
 
     undef $cursor ;
@@ -646,9 +652,10 @@ EOM
 
     close FILE ;
 
+    use Test::More;
     BEGIN { push @INC, '.'; }    
     eval 'use SubDB ; ';
-    main::ok $@ eq "" ;
+    ok $@ eq "" ;
     my @h ;
     my $X ;
     my $rec_len = 34 ;
@@ -661,24 +668,24 @@ EOM
 			);		   
 	' ;
 
-    main::ok $@ eq "" ;
+    ok $@ eq "" ;
 
     my $ret = eval '$h[1] = 3 ; return $h[1] ' ;
-    main::ok $@ eq "" ;
-    main::ok $ret == 7 ;
+    ok $@ eq "" ;
+    ok $ret == 7 ;
 
     my $value = 0;
     $ret = eval '$X->db_put(1, 4) ; $X->db_get(1, $value) ; return $value' ;
-    main::ok $@ eq "" ;
-    main::ok $ret == 10 ;
+    ok $@ eq "" ;
+    ok $ret == 10 ;
 
     $ret = eval ' DB_NEXT eq main::DB_NEXT ' ;
-    main::ok $@ eq ""  ;
-    main::ok $ret == 1 ;
+    ok $@ eq ""  ;
+    ok $ret == 1 ;
 
     $ret = eval '$X->A_new_method(1) ' ;
-    main::ok $@ eq "" ;
-    main::ok $ret eq "[[10]]" ;
+    ok $@ eq "" ;
+    ok $ret eq "[[10]]" ;
 
     undef $X ;
     untie @h ;
@@ -848,9 +855,11 @@ EOM
     ok (( $FA ? pop @array : $db->pop ) eq fillout("the", $rec_len)) ;
     ok (( $FA ? pop @array : $db->pop ) == 200 ) ;
 
+    undef $cursor ;
     # now clear the array 
     $FA ? @array = () 
         : $db->clear() ;
+    ok $cursor = (tied @array)->db_cursor() ;
     ok $cursor->c_get($k, $v, DB_FIRST) == DB_NOTFOUND ;
     undef $cursor ;
     ok $txn->txn_commit() == 0 ;

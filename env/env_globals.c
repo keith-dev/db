@@ -1,18 +1,48 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1999,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1999, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: env_globals.c,v 1.3 2008/01/08 20:58:22 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
 
-/*
- * This is the file that initializes the global array.  Do it this way because
- * people keep changing the structure without changing the initialization code.
- * Having declaration and initialization in one file will hopefully fix that.
- */
-#define	DB_INITIALIZE_DB_GLOBALS	1
-
 #include "db_int.h"
+
+DB_GLOBALS __db_global_values = {
+#ifdef HAVE_VXWORKS
+	0,				/* VxWorks: initialized */
+	NULL,				/* VxWorks: global semaphore */
+#endif
+
+	"=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=",
+	{ 0 },
+	0,
+	0,
+	0,
+	0,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL
+};

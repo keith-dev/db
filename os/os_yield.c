@@ -1,14 +1,13 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1997, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: os_yield.c,v 12.19 2008/01/08 20:58:43 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
 
-#define	__INCLUDE_SELECT_H	1
 #include "db_int.h"
 
 #if defined(HAVE_SYSTEM_INCLUDE_FILES) && defined(HAVE_SCHED_YIELD)
@@ -50,15 +49,14 @@ __os_yield(env, secs, usecs)
 	else {
 #if defined(HAVE_MUTEX_UI_THREADS)
 		thr_yield();
-#elif defined(HAVE_PTHREAD_YIELD) &&					\
-    (defined(HAVE_MUTEX_PTHREADS) || defined(HAVE_PTHREAD_API))
+#elif defined(HAVE_PTHREAD_YIELD)
 		pthread_yield();
 #elif defined(HAVE_SCHED_YIELD)
 		(void)sched_yield();
 #elif defined(HAVE_YIELD)
 		yield();
 #else
-		__os_sleep(dbenv, 0, 0);
+		__os_sleep(env, 0, 0);
 #endif
 	}
 }

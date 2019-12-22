@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 1996,2008 Oracle.  All rights reserved.
+# Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: recd006.tcl,v 12.8 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	recd006
 # TEST	Nested transactions.
@@ -86,7 +86,7 @@ proc recd006 { method {select 0} args } {
 	error_check_good db_close [$db close] 0
 
 	# Now create the full transaction environment.
-	set eflags "-create -txn -home $testdir"
+	set eflags "-create -txn wrnosync -home $testdir"
 
 	puts "\tRecd006.b: creating environment"
 	set env_cmd "berkdb_env $eflags"
@@ -130,8 +130,8 @@ proc recd006 { method {select 0} args } {
 				continue
 			}
 		}
-		op_recover abort $testdir $env_cmd $dbfile $cmd $msg
-		op_recover commit $testdir $env_cmd $dbfile $cmd $msg
+		op_recover abort $testdir $env_cmd $dbfile $cmd $msg $args
+		op_recover commit $testdir $env_cmd $dbfile $cmd $msg $args
 	}
 
 	puts "\tRecd006.k: Verify db_printlog can read logfile"

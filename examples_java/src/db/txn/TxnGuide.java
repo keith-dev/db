@@ -1,3 +1,11 @@
+/*-
+ * See the file LICENSE for redistribution information.
+ *
+ * Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
+ *
+ * $Id$ 
+ */
+
 // File TxnGuide.java
 
 package db.txn;

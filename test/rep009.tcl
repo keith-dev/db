@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 2001,2008 Oracle.  All rights reserved.
+# Copyright (c) 2001, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: rep009.tcl,v 12.17 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST  rep009
 # TEST	Replication and DUPMASTERs
@@ -13,10 +13,7 @@
 proc rep009 { method { niter 10 } { tnum "009" } args } {
 
 	source ./include.tcl
-	if { $is_windows9x_test == 1 } {
-		puts "Skipping replication test on Win 9x platform."
-		return
-	}
+	global repfiles_in_memory
 
 	# Run for btree only.
 	if { $checking_valid_methods } {
@@ -26,6 +23,11 @@ proc rep009 { method { niter 10 } { tnum "009" } args } {
 	if { [is_btree $method] == 0 } {
 		puts "Rep009: Skipping for method $method."
 		return
+	}
+
+	set msg2 "and on-disk replication files"
+	if { $repfiles_in_memory } {
+		set msg2 "and in-memory replication files"
 	}
 
 	set logsets [create_logsets 3]
@@ -39,7 +41,7 @@ proc rep009 { method { niter 10 } { tnum "009" } args } {
 				    for in-memory logs with -recover."
 				continue
 			}
-			puts "Rep$tnum ($r): Replication DUPMASTER test."
+			puts "Rep$tnum ($r): Replication DUPMASTER test $msg2."
 			puts "Rep$tnum: Master logs are [lindex $l 0]"
 			puts "Rep$tnum: Client1 logs are [lindex $l 1]"
 			puts "Rep$tnum: Client2 logs are [lindex $l 2]"
@@ -51,12 +53,18 @@ proc rep009 { method { niter 10 } { tnum "009" } args } {
 
 proc rep009_sub { method niter tnum clean logset recargs largs } {
 	global testdir
+	global repfiles_in_memory
 	global rep_verbose
 	global verbose_type
 
 	set verbargs ""
 	if { $rep_verbose == 1 } {
 		set verbargs " -verbose {$verbose_type on} "
+	}
+
+	set repmemargs ""
+	if { $repfiles_in_memory } {
+		set repmemargs "-rep_inmem_files "
 	}
 
 	env_cleanup $testdir
@@ -86,21 +94,21 @@ proc rep009_sub { method niter tnum clean logset recargs largs } {
 	# Open a master.
 	repladd 1
 	set ma_envcmd "berkdb_env_noerr -create $m_txnargs $m_logargs \
-	    -home $masterdir $verbargs -errpfx MASTER \
+	    -home $masterdir $verbargs -errpfx MASTER $repmemargs \
 	    -rep_transport \[list 1 replsend\]"
 	set masterenv [eval $ma_envcmd $recargs -rep_master]
 
 	# Open a client.
 	repladd 2
 	set cl_envcmd "berkdb_env_noerr -create $c_txnargs $c_logargs \
-	    -home $clientdir $verbargs -errpfx CLIENT1 \
+	    -home $clientdir $verbargs -errpfx CLIENT1 $repmemargs \
 	    -rep_transport \[list 2 replsend\]"
 	set clientenv [eval $cl_envcmd $recargs -rep_client]
 
 	# Open a second client.
 	repladd 3
 	set cl2_envcmd "berkdb_env_noerr -create $c2_txnargs $c2_logargs \
-	    -home $clientdir2 $verbargs -errpfx CLIENT2 \
+	    -home $clientdir2 $verbargs -errpfx CLIENT2 $repmemargs \
 	    -rep_transport \[list 3 replsend\]"
 	set cl2env [eval $cl2_envcmd $recargs -rep_client]
 

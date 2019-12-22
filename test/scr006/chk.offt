@@ -1,8 +1,10 @@
 #!/bin/sh -
 #
-# $Id: chk.offt,v 12.4 2008/05/07 12:40:56 bschmeck Exp $
+# $Id$
 #
 # Make sure that no off_t's have snuck into the release.
+# off_t check is done at runtime in env_sig.c   We add a declaration for 
+# off_t to db.h, so it is always guaranteed to be available.
 
 d=../..
 

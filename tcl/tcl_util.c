@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1999,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1999, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: tcl_util.c,v 12.9 2008/01/08 20:58:52 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -56,7 +56,11 @@ bdb_RandCommand(interp, objc, objv)
 			Tcl_WrongNumArgs(interp, 2, objv, NULL);
 			return (TCL_ERROR);
 		}
+#ifdef	HAVE_RANDOM
+		ret = random();
+#else
 		ret = rand();
+#endif
 		res = Tcl_NewIntObj(ret);
 		break;
 	case RRAND_INT:
@@ -80,7 +84,11 @@ bdb_RandCommand(interp, objc, objv)
 		}
 
 		_debug_check();
+#ifdef	HAVE_RANDOM
+		ret = lo + random() % ((hi - lo) + 1);
+#else
 		ret = lo + rand() % ((hi - lo) + 1);
+#endif
 		res = Tcl_NewIntObj(ret);
 		break;
 	case RSRAND:
@@ -93,7 +101,11 @@ bdb_RandCommand(interp, objc, objv)
 		}
 		if ((result =
 		    Tcl_GetIntFromObj(interp, objv[2], &lo)) == TCL_OK) {
+#ifdef	HAVE_RANDOM
+			srandom((u_int)lo);
+#else
 			srand((u_int)lo);
+#endif
 			res = Tcl_NewIntObj(0);
 		}
 		break;
@@ -106,4 +118,35 @@ bdb_RandCommand(interp, objc, objv)
 	if (result == TCL_OK && res)
 		Tcl_SetObjResult(interp, res);
 	return (result);
+}
+
+/*
+ * PUBLIC: int tcl_LockMutex __P((DB_ENV *, db_mutex_t));
+ */
+int
+tcl_LockMutex(dbenv, mutex)
+	DB_ENV *dbenv;
+	db_mutex_t mutex;
+{
+	/*
+	 * Why such a seemingly ridiculously trivial function?  MUTEX_LOCK can't
+	 * be invoked in a void function.  The behavior of the macro could be
+	 * unwrapped and duplicated in line; but by the time you account for
+	 * HAVE_MUTEX_SUPPORT, checking for MUTEX_INVALID, etc., you've created
+	 * a maintenance burden, and it's just not worth it.
+	 */ 
+	MUTEX_LOCK(dbenv->env, mutex);
+	return (0);
+}
+
+/*
+ * PUBLIC: int tcl_UnlockMutex __P((DB_ENV *, db_mutex_t));
+ */
+int
+tcl_UnlockMutex(dbenv, mutex)
+	DB_ENV *dbenv;
+	db_mutex_t mutex;
+{
+	MUTEX_UNLOCK(dbenv->env, mutex);
+	return (0);
 }

@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 2004,2008 Oracle.  All rights reserved.
+# Copyright (c) 2004, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: rep069.tcl,v 12.8 2008/01/23 16:40:51 carol Exp $
+# $Id$
 #
 # TEST	rep069
 # TEST	Test of internal initialization and elections.
@@ -14,10 +14,9 @@
 proc rep069 { method { niter 200 } { tnum "069" } args } {
 
 	source ./include.tcl
-	if { $is_windows9x_test == 1 } {
-		puts "Skipping replication test on Win 9x platform."
-		return
-	}
+	global databases_in_memory
+	global repfiles_in_memory
+
 	if { $checking_valid_methods } {
 		set test_methods { btree }
 		return $test_methods
@@ -32,10 +31,26 @@ proc rep069 { method { niter 200 } { tnum "069" } args } {
 
 	set logsets [create_logsets 2]
 
+	# Set up for on-disk or in-memory databases.
+	set msg "using on-disk databases"
+	if { $databases_in_memory } {
+		set msg "using named in-memory databases"
+		if { [is_queueext $method] } { 
+			puts -nonewline "Skipping rep$tnum for method "
+			puts "$method with named in-memory databases."
+			return
+		}
+	}
+
+	set msg2 "and on-disk replication files"
+	if { $repfiles_in_memory } {
+		set msg2 "and in-memory replication files"
+	}
+
 	foreach l $logsets {
 		set args $saved_args
-		puts "Rep$tnum ($method $args):\
-		    Test internal initialization and elections."
+		puts "Rep$tnum ($method $args): Test internal\
+		    initialization and elections $msg $msg2."
 		puts "Rep$tnum: Master logs are [lindex $l 0]"
 		puts "Rep$tnum: Client logs are [lindex $l 1]"
 		rep069_sub $method $niter $tnum $l $args
@@ -45,9 +60,10 @@ proc rep069 { method { niter 200 } { tnum "069" } args } {
 proc rep069_sub { method niter tnum logset largs } {
 	global testdir
 	global util_path
+	global databases_in_memory
+	global repfiles_in_memory
 	global rep_verbose
 	global verbose_type
-	global timeout_ok
 
 	env_cleanup $testdir
 
@@ -58,6 +74,12 @@ proc rep069_sub { method niter tnum logset largs } {
 	if { $rep_verbose == 1 } {
 		set verbargs " -verbose {$verbose_type on} "
 	}
+
+	set repmemargs ""
+	if { $repfiles_in_memory } {
+		set repmemargs "-rep_inmem_files "
+	}
+
 	set masterdir $testdir/MASTERDIR
 	file mkdir $masterdir
 
@@ -86,7 +108,8 @@ proc rep069_sub { method niter tnum logset largs } {
 	set envlist {}
 	repladd 1
 	set ma_envcmd "berkdb_env_noerr -create $m_txnargs \
-	    $m_logargs -log_max $log_max -event rep_event $verbargs \
+	    $repmemargs \
+	    $m_logargs -log_max $log_max -event $verbargs \
 	    -home $masterdir -rep_transport \[list 1 replsend\]"
 	set masterenv [eval $ma_envcmd -recover -rep_master]
 	lappend envlist "$masterenv 1"
@@ -96,8 +119,9 @@ proc rep069_sub { method niter tnum logset largs } {
 		set envid [expr $i + 2]
 		repladd $envid
 		set envcmd($i) "berkdb_env_noerr -create \
+		    $repmemargs \
 		    $c_txnargs $c_logargs -log_max $log_max \
-		    -home $clientdir($i) -event rep_event $verbargs \
+		    -home $clientdir($i) -event $verbargs \
 		    -rep_transport \[list $envid replsend\]"
 		set clientenv($i) [eval $envcmd($i) -recover -rep_client]
 		lappend envlist "$clientenv($i) $envid"
@@ -116,7 +140,7 @@ proc rep069_sub { method niter tnum logset largs } {
 	puts "\tRep$tnum.a: Running rep_test in replicated env."
 	set start 0
 	eval rep_test \
-	    $method $masterenv NULL $niter $start $start 0 0 $largs
+	    $method $masterenv NULL $niter $start $start 0 $largs
 	incr start $niter
 	process_msgs $envlist 0 NONE err
 	error_check_good process_msgs $err 0
@@ -140,7 +164,7 @@ proc rep069_sub { method niter tnum logset largs } {
 	while { $stop == 0 } {
 		puts "\tRep$tnum.c: Running rep_test in replicated env."
 		eval rep_test \
-		    $method $masterenv NULL $niter $start $start 0 0 $largs
+		    $method $masterenv NULL $niter $start $start 0 $largs
 		incr start $niter
 
 		puts "\tRep$tnum.d: Run db_archive on master."
@@ -172,12 +196,13 @@ proc rep069_sub { method niter tnum logset largs } {
 	# initialization.
 	#
 	# We figure out whether each client is in initialization
-	# by searching for any of the flags REP_F_RECOVER_UPDATE,
-	# REP_F_RECOVER_PAGE, and REP_F_RECOVER_LOG.  As soon as
-	# a client produces one of these, it's marked as being
-	# in initialization, and stays that way even if it proceeds
-	# further, but we don't exit the loop until all clients
-	# have gotten into initialization.
+	# by searching for the state of SYNC_UPDATE.  As soon as
+	# a client produces that state, it's marked as being
+	# in initialization, and stays that way.  All clients
+	# will get to that state on the same iteration.
+	# 
+	# We will always hit SYNC_UPDATE first, so we only need to
+	# check for that one (i.e. not SYNC_PAGE or SYNC_LOG).
 	#
 	puts "\tRep$tnum.f:\
 	    Run proc_msgs_once until all clients enter internal init."
@@ -190,14 +215,8 @@ proc rep069_sub { method niter tnum logset largs } {
 		set nproced [proc_msgs_once $envlist NONE err]
 		for { set i 0 } { $i < $nclients } { incr i } {
 			set stat($i) \
-			    [exec $util_path/db_stat -r -R A -h $clientdir(1)]
-			if {[is_substr $stat($i) "REP_F_RECOVER_UPDATE"] } {
-				set initializing($i) 1
-			}
-			if {[is_substr $stat($i) "REP_F_RECOVER_PAGE"] } {
-				set initializing($i) 1
-			}
-			if {[is_substr $stat($i) "REP_F_RECOVER_LOG"] } {
+			    [exec $util_path/db_stat -N -r -R A -h $clientdir(1)]
+			if {[is_substr $stat($i) "SYNC_UPDATE"] } {
 				set initializing($i) 1
 			}
 		}
@@ -230,9 +249,14 @@ proc rep069_sub { method niter tnum logset largs } {
 
 	# This election will time out instead of succeeding.
 	set timeout_ok 1
-        run_election envcmd envlist err_cmd pri crash \
+	if { $databases_in_memory } {
+		set dbname { "" "test.db" }
+	} else { 
+		set dbname "test.db"
+	} 
+        run_election envlist err_cmd pri crash \
             $qdir $m $elector $nsites $nvotes $nclients $winner \
-	    0 "test.db" 0 $timeout_ok
+	    0 $dbname 0 $timeout_ok
 
 	# Verify that each client saw the message that no
 	# electable site was found.

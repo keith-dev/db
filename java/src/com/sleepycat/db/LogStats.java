@@ -4,7 +4,7 @@
  *
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 
 package com.sleepycat.db;
@@ -73,15 +73,15 @@ public class LogStats {
         return st_wc_mbytes;
     }
 
-    private int st_record;
+    private long st_record;
     /** The number of records written to this log. **/
-    public int getRecord() {
+    public long getRecord() {
         return st_record;
     }
 
     private int st_w_bytes;
     /**
-    The number of bytes over and above st_w_mbytes written to this log.
+    The number of bytes over and above {@link #getWMbytes} written to this log.
     */
     public int getWBytes() {
         return st_w_bytes;
@@ -95,52 +95,52 @@ public class LogStats {
         return st_w_mbytes;
     }
 
-    private int st_wcount;
+    private long st_wcount;
     /**
     The number of times the log has been written to disk.
     */
-    public int getWCount() {
+    public long getWCount() {
         return st_wcount;
     }
 
-    private int st_wcount_fill;
+    private long st_wcount_fill;
     /**
     The number of times the log has been written to disk because the
     in-memory log record cache filled up.
     */
-    public int getWCountFill() {
+    public long getWCountFill() {
         return st_wcount_fill;
     }
 
-    private int st_rcount;
+    private long st_rcount;
     /** The number of times the log has been read from disk. **/
-    public int getRCount() {
+    public long getRCount() {
         return st_rcount;
     }
 
-    private int st_scount;
+    private long st_scount;
     /**
     The number of times the log has been flushed to disk.
     */
-    public int getSCount() {
+    public long getSCount() {
         return st_scount;
     }
 
-    private int st_region_wait;
+    private long st_region_wait;
     /**
     The number of times that a thread of control was forced to wait
     before obtaining the region lock.
     */
-    public int getRegionWait() {
+    public long getRegionWait() {
         return st_region_wait;
     }
 
-    private int st_region_nowait;
+    private long st_region_nowait;
     /**
     The number of times that a thread of control was able to obtain the
     region lock without waiting.
     */
-    public int getRegionNowait() {
+    public long getRegionNowait() {
         return st_region_nowait;
     }
 

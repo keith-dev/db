@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: log.c,v 12.68 2008/05/05 01:59:52 mjc Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -13,6 +13,8 @@
 #include "dbinc/hmac.h"
 #include "dbinc/log.h"
 #include "dbinc/txn.h"
+#include "dbinc/db_page.h"
+#include "dbinc/db_am.h"
 
 static int	__log_init __P((ENV *, DB_LOG *));
 static int	__log_recover __P((DB_LOG *));
@@ -141,6 +143,7 @@ __log_open(env, create_ok)
 			lp->bulk_len = 0;
 			lp->bulk_off = 0;
 		}
+		dblp->reginfo.mtx_alloc = lp->mtx_region;
 	} else {
 		/*
 		 * A process joining the region may have reset the log file
@@ -161,6 +164,10 @@ __log_open(env, create_ok)
 
 		LOG_SYSTEM_UNLOCK(env);
 		region_locked = 0;
+
+		if (dbenv->lg_flags != 0 && (ret =
+		    __log_set_config_int(dbenv, dbenv->lg_flags, 1, 0)) != 0)
+			return (ret);
 	}
 
 	return (0);
@@ -315,8 +322,11 @@ __log_recover(dblp)
 	 */
 	if ((ret = __log_find(dblp, 0, &cnt, &status)) != 0)
 		return (ret);
-	if (cnt == 0)
+	if (cnt == 0) {
+		if (FLD_ISSET(dbenv->verbose, DB_VERB_RECOVERY))
+			__db_msg(env, "No log files found");
 		return (0);
+	}
 
 	/*
 	 * If the last file is an old, unreadable version, start a new
@@ -457,7 +467,7 @@ __log_find(dblp, find_first, valp, statusp)
 	}
 
 	/* Get the list of file names. */
-	if ((ret = __os_dirlist(env, dir, 0, &names, &fcnt)) != 0) {
+retry:	if ((ret = __os_dirlist(env, dir, 0, &names, &fcnt)) != 0) {
 		__db_err(env, ret, "%s", dir);
 		__os_free(env, p);
 		return (ret);
@@ -506,6 +516,21 @@ __log_find(dblp, find_first, valp, statusp)
 
 		if ((ret = __log_valid(dblp, clv, 1, NULL, 0,
 		    &status, NULL)) != 0) {
+			/*
+			 * If we have raced with removal of a log file since
+			 * the call to __os_dirlist, it may no longer exist.
+			 * In that case, just go on to the next one.  If we're
+			 * at the end of the list, all of the log files we saw
+			 * initially are gone and we need to get the list again.
+			 */
+			if (ret == ENOENT) {
+				ret = 0;
+				if (cnt == 0) {
+					__os_dirfree(env, names, fcnt);
+					goto retry;
+				}
+				continue;
+			}
 			__db_err(
 			    env, ret, "Invalid log file: %s", names[cnt]);
 			goto err;
@@ -696,8 +721,21 @@ __log_valid(dblp, number, set_persist, fhpp, flags, statusp, versionp)
 			goto err;
 	}
 
-	if (LOG_SWAPPED(env))
+	/* Swap the header, if necessary. */
+	if (LOG_SWAPPED(env)) {
+		/*
+		 * If the magic number is not byte-swapped, we're looking at an
+		 * old log that we can no longer read.
+		 */
+		if (persist->magic == DB_LOGMAGIC) {
+			__db_errx(env,
+			    "Ignoring log file: %s historic byte order", fname);
+			status = DB_LV_OLD_UNREADABLE;
+			goto err;
+		}
+
 		__log_persistswap(persist);
+	}
 
 	/* Validate the header. */
 	if (persist->magic != DB_LOGMAGIC) {
@@ -818,7 +856,6 @@ __log_env_refresh(env)
 	    (t_ret = __log_flush(env, NULL)) != 0 && ret == 0)
 		ret = t_ret;
 
-	/* We may have opened files as part of XA; if so, close them. */
 	if ((t_ret = __dbreg_close_files(env, 0)) != 0 && ret == 0)
 		ret = t_ret;
 
@@ -842,6 +879,7 @@ __log_env_refresh(env)
 	 * owned by any particular process.
 	 */
 	if (F_ISSET(env, ENV_PRIVATE)) {
+		reginfo->mtx_alloc = MUTEX_INVALID;
 		/* Discard the flush mutex. */
 		if ((t_ret =
 		    __mutex_free(env, &lp->mtx_flush)) != 0 && ret == 0)
@@ -870,7 +908,7 @@ __log_env_refresh(env)
 			__env_alloc_free(reginfo, filestart);
 		}
 
-		/* Discord commit queue elements. */
+		/* Discard commit queue elements. */
 		while ((commit = SH_TAILQ_FIRST(&lp->free_commits,
 		    __db_commit)) != NULL) {
 			SH_TAILQ_REMOVE(&lp->free_commits, commit, links,

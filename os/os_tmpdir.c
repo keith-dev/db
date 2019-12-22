@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1998,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1998, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: os_tmpdir.c,v 12.18 2008/01/08 20:58:43 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -128,6 +128,9 @@ found:			return (__os_strdup(env, tdir, &dbenv->db_tmp_dir));
 	DB_TEMP_DIRECTORY("/var/tmp");
 	DB_TEMP_DIRECTORY("/usr/tmp");
 	DB_TEMP_DIRECTORY("/tmp");
+#if defined(ANDROID) || defined(DB_ANDROID)
+	DB_TEMP_DIRECTORY("/cache");
+#endif 
 #endif
 
 	/*

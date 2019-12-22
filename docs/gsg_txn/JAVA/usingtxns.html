@@ -5,11 +5,11 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <title>Chapter 3. Transaction Basics</title>
     <link rel="stylesheet" href="gettingStarted.css" type="text/css" />
-    <meta name="generator" content="DocBook XSL Stylesheets V1.62.4" />
-    <link rel="home" href="index.html" title="Getting Started with Berkeley DB Transaction Processing" />
+    <meta name="generator" content="DocBook XSL Stylesheets V1.73.2" />
+    <link rel="start" href="index.html" title="Getting Started with Berkeley DB Transaction Processing" />
     <link rel="up" href="index.html" title="Getting Started with Berkeley DB Transaction Processing" />
-    <link rel="previous" href="envopen.html" title="Opening a Transactional Environment and&#10;            &#10;            Store or Database&#10;            &#10;        " />
-    <link rel="next" href="abortresults.html" title="Aborting a Transaction" />
+    <link rel="prev" href="envopen.html" title="Opening a Transactional Environment and Store or Database" />
+    <link rel="next" href="nodurabletxn.html" title="Non-Durable Transactions" />
   </head>
   <body>
     <div class="navheader">
@@ -20,7 +20,7 @@
         <tr>
           <td width="20%" align="left"><a accesskey="p" href="envopen.html">Prev</a> </td>
           <th width="60%" align="center"> </th>
-          <td width="20%" align="right"> <a accesskey="n" href="abortresults.html">Next</a></td>
+          <td width="20%" align="right"> <a accesskey="n" href="nodurabletxn.html">Next</a></td>
         </tr>
       </table>
       <hr />
@@ -32,7 +32,6 @@
             <h2 class="title"><a id="usingtxns"></a>Chapter 3. Transaction Basics</h2>
           </div>
         </div>
-        <div></div>
       </div>
       <div class="toc">
         <p>
@@ -44,15 +43,11 @@
               <a href="usingtxns.html#commitresults">Committing a Transaction</a>
             </span>
           </dt>
-          <dd>
-            <dl>
-              <dt>
-                <span class="sect2">
-                  <a href="usingtxns.html#nodurabletxn">Non-Durable Transactions</a>
-                </span>
-              </dt>
-            </dl>
-          </dd>
+          <dt>
+            <span class="sect1">
+              <a href="nodurabletxn.html">Non-Durable Transactions</a>
+            </span>
+          </dt>
           <dt>
             <span class="sect1">
               <a href="abortresults.html">Aborting a Transaction</a>
@@ -104,7 +99,7 @@
         You obtain a transaction handle using the
         
         
-        <span><tt class="methodname">Environment.beginTransaction()</tt> method.</span>
+        <span><code class="methodname">Environment.beginTransaction()</code> method.</span>
         
         
      </p>
@@ -113,7 +108,7 @@
         in the transaction, you must commit the transaction using the 
         
         
-        <span><tt class="methodname">Transaction.commit()</tt> method.</span>
+        <span><code class="methodname">Transaction.commit()</code> method.</span>
         
         
         
@@ -123,7 +118,7 @@
         it using 
         
         
-        <span><tt class="methodname">Transaction.abort()</tt>.</span>
+        <span><code class="methodname">Transaction.abort()</code>.</span>
         
         
 
@@ -142,7 +137,7 @@
         <p>
             If you only want to transaction protect a single database write operation, you can use auto commit to 
             perform the transaction administration. When you use auto commit, you do not need an explicit transaction
-            handle. See <a href="autocommit.html">Auto Commit</a> for more information.
+            handle. See <a class="xref" href="autocommit.html" title="Auto Commit">Auto Commit</a> for more information.
         </p>
       </div>
       <p>
@@ -154,7 +149,7 @@
 
     </p>
       <pre class="programlisting">package persist.txn;
-                                                                                                                                     
+
 import com.sleepycat.db.DatabaseException;
 import com.sleepycat.db.Environment;
 import com.sleepycat.db.EnvironmentConfig;
@@ -165,9 +160,9 @@ import com.sleepycat.persist.StoreConfig;
 
 import java.io.File;
 import java.io.FileNotFoundException;
-                                                                                                                                     
+
 ...
-                                                                                                                                     
+
 Environment myEnv = null;
 EntityStore store = null;
 
@@ -222,11 +217,11 @@ try {
     // Exception handling goes here
 }</pre>
       <p>
-        The same thing can be done with the base API. In this case, the
+        The same thing can be done with the base API; the
         database in use is left unchanged if the write operation fails:
     </p>
       <pre class="programlisting">package db.txn;
-                                                                                                                                     
+
 import com.sleepycat.db.Database;
 import com.sleepycat.db.DatabaseConfig;
 import com.sleepycat.db.DatabaseEntry;
@@ -237,9 +232,9 @@ import com.sleepycat.db.Transaction;
 
 import java.io.File;
 import java.io.FileNotFoundException;
-                                                                                                                                     
+
 ...
-                                                                                                                                     
+
 Database myDatabase = null;
 Environment myEnv = null;
 try {
@@ -291,7 +286,6 @@ try {
               <h2 class="title" style="clear: both"><a id="commitresults"></a>Committing a Transaction</h2>
             </div>
           </div>
-          <div></div>
         </div>
         <p>
             In order to fully understand what is happening when you commit
@@ -351,13 +345,13 @@ try {
                     Any log information held in memory is (by default)
                     synchronously written to disk. Note that this requirement can be
                     relaxed, depending on the type of commit you perform.
-                    See <a href="usingtxns.html#nodurabletxn">Non-Durable Transactions</a> for
+                    See <a class="xref" href="nodurabletxn.html" title="Non-Durable Transactions">Non-Durable Transactions</a> for
                     more information. 
                     <span>Also, if you are
                     maintaining your logs entirely in-memory, then this
                     step will of course not be taken. To configure your
                     logging system for in-memory usage, see
-                    <a href="logconfig.html#inmemorylogging">Configuring In-Memory Logging</a>.
+                    <a class="xref" href="logconfig.html#inmemorylogging" title="Configuring In-Memory Logging">Configuring In-Memory Logging</a>.
                     </span>
                 </p>
             </li>
@@ -366,7 +360,7 @@ try {
                     All locks held by the transaction are released. This means
                     that read operations performed by other transactions or
                     threads of control can now see the modifications without
-                    resorting to uncommitted reads (see <a href="isolation.html#dirtyreads">Reading Uncommitted Data</a> for more information).
+                    resorting to uncommitted reads (see <a class="xref" href="isolation.html#dirtyreads" title="Reading Uncommitted Data">Reading Uncommitted Data</a> for more information).
                 </p>
             </li>
           </ul>
@@ -375,7 +369,7 @@ try {
             To commit a transaction, you simply call
             
             
-            <span><tt class="methodname">Transaction.commit()</tt>.</span>
+            <span><code class="methodname">Transaction.commit()</code>.</span>
             
             
         </p>
@@ -398,7 +392,7 @@ try {
                     in the cache to be written to disk, and a checkpoint
                     record is then written to the logs.  You can run checkpoints
                     explicitly. For more information on checkpoints,
-                    see <a href="filemanagement.html#checkpoints">Checkpoints</a>.
+                    see <a class="xref" href="filemanagement.html#checkpoints" title="Checkpoints">Checkpoints</a>.
                 </p>
             </li>
             <li>
@@ -435,162 +429,6 @@ try {
                 perform database activities under the control of a new
                 transaction, you must obtain a fresh transaction handle.
               </p>
-        <div class="sect2" lang="en" xml:lang="en">
-          <div class="titlepage">
-            <div>
-              <div>
-                <h3 class="title"><a id="nodurabletxn"></a>Non-Durable Transactions</h3>
-              </div>
-            </div>
-            <div></div>
-          </div>
-          <p>
-                As previously noted, by default transaction commits are
-                durable because they cause the modifications performed
-                under the transaction to be synchronously recorded in 
-                your on-disk log files.  However, it is possible to use 
-                non-durable transactions.
-            </p>
-          <p>
-                You may want non-durable transactions for performance
-                reasons. For example, you might be using transactions
-                simply for the isolation guarantee. 
-                
-                <span>
-                In this case, you might
-                not want a durability guarantee and so you may want to
-                prevent the disk I/O that normally accompanies a
-                transaction commit.
-                </span>
-                
-            </p>
-          <p>
-                There are several ways to remove the durability guarantee
-                for your transactions:
-            </p>
-          <div class="itemizedlist">
-            <ul type="disc">
-              <li>
-                <p>
-                        Specify          
-                            
-                            <span>
-                                <tt class="literal">true</tt> to the
-                                <tt class="methodname">EnvironmentConfig.setTxnNoSync()</tt>
-                                
-                                method.
-                            </span>
-                         This causes DB to not synchronously force any
-                            <span>
-                                log 
-                            </span>
-                         data to disk upon transaction commit. 
-                         
-                         <span>
-                            That is, the modifications are held entirely
-                            in the in-memory cache and the logging
-                            information is not forced to the filesystem for
-                            long-term storage.
-                         </span>
-
-                         Note, however, that the 
-                            <span>
-                                logging 
-                            </span>
-                         data will eventually make it to the filesystem (assuming no
-                         application or OS crashes) as a part of DB's
-                         management of its logging buffers and/or cache.
-                         </p>
-                <p>
-                            This form of a commit provides a weak durability
-                            guarantee because data loss can occur due to
-                            an application<span>, JVM,</span> 
-                            or OS crash.
-                    </p>
-                <p>
-                        This behavior is specified on a per-environment
-                        handle basis.  In order for your application to exhibit consistent
-                        behavior, you need to specify this 
-                            
-                            <span>method</span>
-                        for all of the environment handles used in your application.
-                    </p>
-                <p>
-                        You can achieve this behavior on a transaction by transaction basis by
-                            
-
-                            <span>
-                                using <tt class="methodname">Transaction.commitNoSync()</tt>
-                                      
-                                to commit your transaction, or by specifying <tt class="literal">true</tt> to the 
-                                <tt class="methodname">TransactionConfig.setNoSync()</tt> method when starting the
-                                transaction.
-                            </span>
-
-                    </p>
-              </li>
-              <li>
-                <p>
-                        Specify
-                        
-
-                            <span>
-                                <tt class="literal">true</tt> to the
-                                <tt class="methodname">EnvironmentConfig.setTxnWriteNoSync()</tt>
-                                method.
-                            </span>
-
-                            This causes 
-                            <span>
-                                logging 
-                            </span>
-                            data to be synchronously
-                            written to the OS's file system buffers upon
-                            transaction commit. The data will eventually be
-                            written to disk, but this occurs when the
-                            operating system chooses to schedule the
-                            activity; the transaction commit can complete
-                            successfully before this disk I/O is performed
-                            by the OS.
-                       </p>
-                <p>
-                                This  form of commit protects you against application
-                                <span>and JVM</span> crashes, but not against OS
-                                crashes.  This method offers less room for the possibility of data loss than does
-                                
-                                <span><tt class="methodname">EnvironmentConfig.setTxnNoSync()</tt>.</span>
-                    </p>
-                <p>
-                        This behavior is specified on a per-environment
-                        handle basis.  In order for your application to exhibit consistent
-                        behavior, you need to specify this 
-                            
-                            <span>method</span>
-                        for all of the environment handles used in your application.
-                    </p>
-                <p>
-                        You can achieve this behavior on a transaction by transaction basis by
-                            <span>
-                                using <tt class="methodname">Transaction.commitWriteNoSync()</tt>
-                                to commit your transaction, or by specifying <tt class="literal">true</tt> to
-                                <tt class="methodname">TransactionConfig.setWriteNoSync()</tt> method when starting the
-                                transaction.
-                            </span>
-                    </p>
-              </li>
-              <li>
-                <p>
-                        Maintain your logs entirely in-memory. In this
-                        case, your logs are never written to disk. The
-                        result is that you lose all durability guarantees.
-                        See 
-                        <a href="logconfig.html#inmemorylogging">Configuring In-Memory Logging</a>
-                        for more information.
-                    </p>
-              </li>
-            </ul>
-          </div>
-        </div>
       </div>
     </div>
     <div class="navfooter">
@@ -598,21 +436,19 @@ try {
       <table width="100%" summary="Navigation footer">
         <tr>
           <td width="40%" align="left"><a accesskey="p" href="envopen.html">Prev</a> </td>
-          <td width="20%" align="center">
-            <a accesskey="u" href="index.html">Up</a>
-          </td>
-          <td width="40%" align="right"> <a accesskey="n" href="abortresults.html">Next</a></td>
+          <td width="20%" align="center"> </td>
+          <td width="40%" align="right"> <a accesskey="n" href="nodurabletxn.html">Next</a></td>
         </tr>
         <tr>
           <td width="40%" align="left" valign="top">Opening a Transactional Environment and
             
-            Store or Database
+            <span>Store or Database</span>
             
          </td>
           <td width="20%" align="center">
             <a accesskey="h" href="index.html">Home</a>
           </td>
-          <td width="40%" align="right" valign="top"> Aborting a Transaction</td>
+          <td width="40%" align="right" valign="top"> Non-Durable Transactions</td>
         </tr>
       </table>
     </div>

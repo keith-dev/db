@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 2005,2008 Oracle.  All rights reserved.
+# Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: test113.tcl,v 12.10 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	test113
 # TEST	Test database compaction with duplicates.
@@ -19,8 +19,8 @@ proc test113 { method {nentries 10000} {ndups 5} {tnum "113"} args } {
 	source ./include.tcl
 	global alphabet
 
-	# Compaction and duplicates can occur only with btree.
-	if { [is_btree $method] != 1 } {
+	# Compaction and duplicates can occur only with btree or hash.
+	if { [is_btree $method] != 1 && [is_hash $method] != 1} {
 		puts "Skipping test$tnum for method $method."
 		return
 	}
@@ -35,6 +35,11 @@ proc test113 { method {nentries 10000} {ndups 5} {tnum "113"} args } {
 
 	set args [convert_args $method $args]
 	set omethod [convert_method $method]
+	if  { [is_partition_callback $args] == 1 } {
+		set nodump 1
+	} else {
+		set nodump 0
+	}
 
 	# If we are using an env, then testfile should just be the db name.
 	# Otherwise it is the test directory and the name.
@@ -62,13 +67,19 @@ proc test113 { method {nentries 10000} {ndups 5} {tnum "113"} args } {
 
 	puts "Test$tnum: $method ($args)\
 	    Database compaction with duplicates."
+	set subdb ""
+	set subindx [lsearch -exact $args "-subdb"]
+	if { $subindx != -1 } {
+		set subdb "subdb"
+		set args [lreplace $args $subindx $subindx]
+	}
 
 	set t1 $testdir/t1
 	set t2 $testdir/t2
 	cleanup $testdir $env
 
 	set db [eval {berkdb_open -create -pagesize 512 \
-	    -dup -dupsort -mode 0644} $args $omethod $testfile]
+	    -dup -dupsort -mode 0644} $args $omethod $testfile $subdb]
 	error_check_good dbopen [is_valid_db $db] TRUE
 
 	puts "\tTest$tnum.a: Populate database with dups."
@@ -98,7 +109,7 @@ proc test113 { method {nentries 10000} {ndups 5} {tnum "113"} args } {
 		set filename $testfile
 	}
 	set size1 [file size $filename]
-	set free1 [stat_field $db stat "Pages on freelist"]
+	set count1 [stat_field $db stat "Page count"]
 
 	puts "\tTest$tnum.b: Delete most entries from database."
 	if { $txnenv == 1 } {
@@ -133,15 +144,37 @@ proc test113 { method {nentries 10000} {ndups 5} {tnum "113"} args } {
 	}
 
 	puts "\tTest$tnum.d: Compact database."
-	set ret [$db compact -freespace]
-	error_check_good db_sync [$db sync] 0
-	error_check_good db_verify [verify_dir $testdir] 0
+	for {set commit 0} {$commit <= $txnenv} {incr commit} {
+		if { $txnenv == 1 } {
+			set t [$env txn]
+			error_check_good txn [is_valid_txn $t $env] TRUE
+			set txn "-txn $t"
+		}
+		set ret [eval {$db compact} $txn {-freespace}]
+		if { $txnenv == 1 } {
+			if { $commit == 0 } {
+				puts "\tTest$tnum.d: Aborting."
+				error_check_good txn_abort [$t abort] 0
+			} else {
+				puts "\tTest$tnum.d: Committing."
+				error_check_good txn_commit [$t commit] 0
+			}
+		}
+		error_check_good db_sync [$db sync] 0
+		error_check_good verify_dir \
+		    [ verify_dir $testdir "" 0 0 $nodump] 0
+	}
 
 	set size2 [file size $filename]
-	set free2 [stat_field $db stat "Pages on freelist"]
-	error_check_good pages_freed [expr $free2 > $free1] 1
+	set count2 [stat_field $db stat "Page count"]
+
+	error_check_good page_count_reduced [expr $count1 > $count2] 1
+#### We should look at the partitioned files #####
+if { [is_partitioned $args] == 0 } {
 	set reduction .80
+# puts "$size1 $size2"
 	error_check_good file_size [expr [expr $size1 * $reduction] > $size2] 1
+}
 
 	puts "\tTest$tnum.e: Check that contents are the same after compaction."
 	if { $txnenv == 1 } {
@@ -153,7 +186,13 @@ proc test113 { method {nentries 10000} {ndups 5} {tnum "113"} args } {
 	if { $txnenv == 1 } {
 		error_check_good txn_commit [$t commit] 0
 	}
-	error_check_good filecmp [filecmp $t1 $t2] 0
+	if { [is_hash $method]  != 0 } {
+		filesort $t1 $t1.sort
+		filesort $t2 $t2.sort
+		error_check_good filecmp [filecmp $t1.sort $t2.sort] 0
+	} else {
+		error_check_good filecmp [filecmp $t1 $t2] 0
+	}
 
 	puts "\tTest$tnum.f: Add more entries to database."
 	if { $txnenv == 1 } {
@@ -176,7 +215,7 @@ proc test113 { method {nentries 10000} {ndups 5} {tnum "113"} args } {
 	error_check_good db_sync [$db sync] 0
 
 	set size3 [file size $filename]
-	set free3 [stat_field $db stat "Pages on freelist"]
+	set count3 [stat_field $db stat "Page count"]
 
 	puts "\tTest$tnum.g: Remove more entries, this time by cursor."
 	set i 0
@@ -205,18 +244,46 @@ proc test113 { method {nentries 10000} {ndups 5} {tnum "113"} args } {
 	dump_file $db "" $t1
 
 	puts "\tTest$tnum.i: Compact database again."
-	set ret [$db compact -freespace]
-	error_check_good db_sync [$db sync] 0
-	error_check_good db_verify [verify_dir $testdir] 0
+	for {set commit 0} {$commit <= $txnenv} {incr commit} {
+		if { $txnenv == 1 } {
+			set t [$env txn]
+			error_check_good txn [is_valid_txn $t $env] TRUE
+			set txn "-txn $t"
+		}
+		set ret [eval {$db compact} $txn {-freespace}]
+		if { $txnenv == 1 } {
+			if { $commit == 0 } {
+				puts "\tTest$tnum.d: Aborting."
+				error_check_good txn_abort [$t abort] 0
+			} else {
+				puts "\tTest$tnum.d: Committing."
+				error_check_good txn_commit [$t commit] 0
+			}
+		}
+		error_check_good db_sync [$db sync] 0
+		error_check_good verify_dir \
+		    [ verify_dir $testdir "" 0 0 $nodump] 0
+	}
 
 	set size4 [file size $filename]
-	set free4 [stat_field $db stat "Pages on freelist"]
-	error_check_good pages_freed [expr $free4 > $free3] 1
+	set count4 [stat_field $db stat "Page count"]
+	error_check_good page_count_reduced [expr $count3 > $count4] 1
+
+#### We should look at the partitioned files #####
+if { [is_partitioned $args] == 0 } {
+# puts "$size3 $size4"
 	error_check_good file_size [expr [expr $size3 * $reduction] > $size4] 1
+}
 
 	puts "\tTest$tnum.j: Check that contents are the same after compaction."
 	dump_file $db "" $t2
-	error_check_good filecmp [filecmp $t1 $t2] 0
+	if { [is_hash $method]  != 0 } {
+		filesort $t1 $t1.sort
+		filesort $t2 $t2.sort
+		error_check_good filecmp [filecmp $t1.sort $t2.sort] 0
+	} else {
+		error_check_good filecmp [filecmp $t1 $t2] 0
+	}
 
 	error_check_good db_close [$db close] 0
 }

@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: VerboseConfig.java,v 12.8 2008/04/30 20:04:13 bschmeck Exp $
+ * $Id$
  */
 
 package com.sleepycat.db;
@@ -84,6 +84,16 @@ public final class VerboseConfig {
     */
     public static final VerboseConfig REPLICATION_SYNC =
         new VerboseConfig("REPLICATION_SYNC", DbConstants.DB_VERB_REP_SYNC);
+    /**
+    Saves replication system information to a system-owned file. This value is on by default.
+    */
+    public static final VerboseConfig REPLICATION_SYSTEM =
+        new VerboseConfig("REPLICATION_SYSTEM", DbConstants.DB_VERB_REP_SYSTEM);
+    /**
+    Display temporary replication test information.
+    */
+    public static final VerboseConfig REPLICATION_TEST =
+        new VerboseConfig("REPLICATION_TEST", DbConstants.DB_VERB_REP_TEST);
     /**
     Display the waits-for table when doing deadlock detection.
     */

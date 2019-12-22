@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: rep_stub.c,v 12.41 2008/01/08 20:58:48 bostic Exp $
+ * $Id$
  */
 
 #ifndef HAVE_REPLICATION
@@ -60,9 +60,11 @@ __env_db_rep_exit(env)
 }
 
 int
-__op_rep_enter(env)
+__op_rep_enter(env, local_nowait)
 	ENV *env;
+	int local_nowait;
 {
+	COMPQUIET(local_nowait, 0);
 	return (__db_norep(env));
 }
 
@@ -71,6 +73,22 @@ __op_rep_exit(env)
 	ENV *env;
 {
 	return (__db_norep(env));
+}
+
+int
+__archive_rep_enter(env)
+	ENV *env;
+{
+	COMPQUIET(env, NULL);
+	return (0);
+}
+
+int
+__archive_rep_exit(env)
+	ENV *env;
+{
+	COMPQUIET(env, NULL);
+	return (0);
 }
 
 int
@@ -99,7 +117,7 @@ __rep_env_refresh(env)
 }
 
 int
-__rep_elect(dbenv, nsites, nvotes, flags)
+__rep_elect_pp(dbenv, nsites, nvotes, flags)
 	DB_ENV *dbenv;
 	u_int32_t nsites, nvotes;
 	u_int32_t flags;
@@ -127,12 +145,20 @@ __rep_lease_check(env, refresh)
 }
 
 int
-__rep_lease_expire(env, locked)
+__rep_lease_expire(env)
 	ENV *env;
-	int locked;
 {
-	COMPQUIET(locked, 0);
 	return (__db_norep(env));
+}
+
+void
+__rep_msg(env, msg)
+	const ENV *env;
+	const char *msg;
+{
+	COMPQUIET(env, NULL);
+	COMPQUIET(msg, NULL);
+	return;
 }
 
 int
@@ -246,14 +272,6 @@ __rep_get_limit(dbenv, gbytesp, bytesp)
 }
 
 int
-__rep_noarchive(env)
-	ENV *env;
-{
-	COMPQUIET(env, NULL);
-	return (0);
-}
-
-int
 __rep_open(env)
 	ENV *env;
 {
@@ -269,7 +287,7 @@ __rep_preclose(env)
 }
 
 int
-__rep_process_message(dbenv, control, rec, eid, ret_lsnp)
+__rep_process_message_pp(dbenv, control, rec, eid, ret_lsnp)
 	DB_ENV *dbenv;
 	DBT *control, *rec;
 	int eid;
@@ -311,7 +329,7 @@ __rep_set_limit(dbenv, gbytes, bytes)
 }
 
 int
-__rep_set_transport(dbenv, eid, f_send)
+__rep_set_transport_pp(dbenv, eid, f_send)
 	DB_ENV *dbenv;
 	int eid;
 	int (*f_send) __P((DB_ENV *, const DBT *, const DBT *, const DB_LSN *,
@@ -343,7 +361,7 @@ __rep_get_request(dbenv, minp, maxp)
 }
 
 int
-__rep_start(dbenv, dbt, flags)
+__rep_start_pp(dbenv, dbt, flags)
 	DB_ENV *dbenv;
 	DBT *dbt;
 	u_int32_t flags;
@@ -389,5 +407,18 @@ __rep_sync(dbenv, flags)
 {
 	COMPQUIET(flags, 0);
 	return (__db_norep(dbenv->env));
+}
+
+int
+__rep_txn_applied(env, ip, commit_info, timeout)
+	ENV *env;
+	DB_THREAD_INFO *ip;
+	DB_COMMIT_INFO *commit_info;
+	db_timeout_t timeout;
+{
+	COMPQUIET(ip, 0);
+	COMPQUIET(commit_info, NULL);
+	COMPQUIET(timeout, 0);
+	return (__db_norep(env));
 }
 #endif /* !HAVE_REPLICATION */

@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1999,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1999, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: tcl_rep.c,v 12.53 2008/02/05 13:00:22 sue Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -29,16 +29,20 @@ tcl_RepConfig(interp, dbenv, list)
 	Tcl_Obj *list;			/* {which on|off} */
 {
 	static const char *confwhich[] = {
+		"autoinit",
 		"bulk",
 		"delayclient",
-		"noautoinit",
+		"mgr2sitestrict",
+		"mgrelections",
 		"nowait",
 		NULL
 	};
 	enum confwhich {
+		REPCONF_AUTOINIT,
 		REPCONF_BULK,
 		REPCONF_DELAYCLIENT,
-		REPCONF_NOAUTOINIT,
+		REPCONF_MGR2SITESTRICT,
+		REPCONF_MGRELECTIONS,
 		REPCONF_NOWAIT
 	};
 	static const char *confonoff[] = {
@@ -64,14 +68,20 @@ tcl_RepConfig(interp, dbenv, list)
 		return (IS_HELP(which));
 
 	switch ((enum confwhich)optindex) {
-	case REPCONF_NOAUTOINIT:
-		wh = DB_REP_CONF_NOAUTOINIT;
+	case REPCONF_AUTOINIT:
+		wh = DB_REP_CONF_AUTOINIT;
 		break;
 	case REPCONF_BULK:
 		wh = DB_REP_CONF_BULK;
 		break;
 	case REPCONF_DELAYCLIENT:
 		wh = DB_REP_CONF_DELAYCLIENT;
+		break;
+	case REPCONF_MGR2SITESTRICT:
+		wh = DB_REPMGR_CONF_2SITE_STRICT;
+		break;
+	case REPCONF_MGRELECTIONS:
+		wh = DB_REPMGR_CONF_ELECTIONS;
 		break;
 	case REPCONF_NOWAIT:
 		wh = DB_REP_CONF_NOWAIT;
@@ -153,18 +163,24 @@ tcl_RepGetConfig(interp, dbenv, which)
 	Tcl_Obj *which;			/* which flag */
 {
 	static const char *confwhich[] = {
+		"autoinit",
 		"bulk",
 		"delayclient",
+		"inmem_files",
 		"lease",
-		"noautoinit",
+		"mgr2sitestrict",
+		"mgrelections",
 		"nowait",
 		NULL
 	};
 	enum confwhich {
+		REPGCONF_AUTOINIT,
 		REPGCONF_BULK,
 		REPGCONF_DELAYCLIENT,
+		REPGCONF_INMEM_FILES,
 		REPGCONF_LEASE,
-		REPGCONF_NOAUTOINIT,
+		REPGCONF_MGR2SITESTRICT,
+		REPGCONF_MGRELECTIONS,
 		REPGCONF_NOWAIT
 	};
 	Tcl_Obj *res;
@@ -177,17 +193,26 @@ tcl_RepGetConfig(interp, dbenv, which)
 
 	res = NULL;
 	switch ((enum confwhich)optindex) {
+	case REPGCONF_AUTOINIT:
+		wh = DB_REP_CONF_AUTOINIT;
+		break;
 	case REPGCONF_BULK:
 		wh = DB_REP_CONF_BULK;
 		break;
 	case REPGCONF_DELAYCLIENT:
 		wh = DB_REP_CONF_DELAYCLIENT;
 		break;
+	case REPGCONF_INMEM_FILES:
+		wh = DB_REP_CONF_INMEM;
+		break;
 	case REPGCONF_LEASE:
 		wh = DB_REP_CONF_LEASE;
 		break;
-	case REPGCONF_NOAUTOINIT:
-		wh = DB_REP_CONF_NOAUTOINIT;
+	case REPGCONF_MGR2SITESTRICT:
+		wh = DB_REPMGR_CONF_2SITE_STRICT;
+		break;
+	case REPGCONF_MGRELECTIONS:
+		wh = DB_REPMGR_CONF_ELECTIONS;
 		break;
 	case REPGCONF_NOWAIT:
 		wh = DB_REP_CONF_NOWAIT;
@@ -309,7 +334,7 @@ tcl_RepElect(interp, objc, objv, dbenv)
 	u_int32_t full_timeout, nsites, nvotes, pri, timeout;
 
 	if (objc != 6 && objc != 7) {
-		Tcl_WrongNumArgs(interp, 6, objv,
+		Tcl_WrongNumArgs(interp, 2, objv,
 		    "nsites nvotes pri timeout [full_timeout]");
 		return (TCL_ERROR);
 	}
@@ -465,6 +490,27 @@ tcl_RepLease(interp, objc, objv, dbenv)
 
 #ifdef CONFIG_TEST
 /*
+ * tcl_RepInmemFiles --
+ *	Set in-memory replication, which must be done before opening
+ *	environment.
+ *
+ * PUBLIC: int tcl_RepInmemFiles  __P((Tcl_Interp *, DB_ENV *));
+ */
+int
+tcl_RepInmemFiles(interp, dbenv)
+	Tcl_Interp *interp;		/* Interpreter */
+	DB_ENV *dbenv;
+{
+	int ret;
+
+	ret = dbenv->rep_set_config(dbenv, DB_REP_CONF_INMEM, 1);
+	return (_ReturnSetup(interp, ret, DB_RETOK_STD(ret),
+	    "rep_set_config"));
+}
+#endif
+
+#ifdef CONFIG_TEST
+/*
  * tcl_RepLimit --
  *	Call DB_ENV->rep_set_limit().
  *
@@ -482,7 +528,7 @@ tcl_RepLimit(interp, objc, objv, dbenv)
 	u_int32_t bytes, gbytes;
 
 	if (objc != 4) {
-		Tcl_WrongNumArgs(interp, 4, objv, "gbytes bytes");
+		Tcl_WrongNumArgs(interp, 2, objv, "gbytes bytes");
 		return (TCL_ERROR);
 	}
 
@@ -520,7 +566,7 @@ tcl_RepRequest(interp, objc, objv, dbenv)
 	long min, max;
 
 	if (objc != 4) {
-		Tcl_WrongNumArgs(interp, 4, objv, "min max");
+		Tcl_WrongNumArgs(interp, 2, objv, "min max");
 		return (TCL_ERROR);
 	}
 
@@ -595,7 +641,7 @@ tcl_RepTransport(interp, objc, objv, dbenv, ip)
 	int intarg, result, ret;
 
 	if (objc != 2) {
-		Tcl_WrongNumArgs(interp, 2, objv, "{id transport_func");
+		Tcl_WrongNumArgs(interp, 2, objv, "{id transport_func}");
 		return (TCL_ERROR);
 	}
 
@@ -674,7 +720,7 @@ tcl_RepStart(interp, objc, objv, dbenv)
 	flag = 0;
 
 	if (objc != 3) {
-		Tcl_WrongNumArgs(interp, 3, objv, "[-master/-client]");
+		Tcl_WrongNumArgs(interp, 2, objv, "[-master/-client]");
 		return (TCL_ERROR);
 	}
 
@@ -730,7 +776,7 @@ tcl_RepProcessMessage(interp, objc, objv, dbenv)
 	int freectl, freerec, myobjc, result, ret;
 
 	if (objc != 5) {
-		Tcl_WrongNumArgs(interp, 5, objv, "id control rec");
+		Tcl_WrongNumArgs(interp, 2, objv, "id control rec");
 		return (TCL_ERROR);
 	}
 	freectl = freerec = 0;
@@ -868,7 +914,7 @@ tcl_RepStat(interp, objc, objv, dbenv)
 	Tcl_Obj *myobjv[2], *res, *thislist, *lsnlist;
 	u_int32_t flag;
 	int myobjc, result, ret;
-	char *arg;
+	char *arg, *role;
 
 	flag = 0;
 	result = TCL_OK;
@@ -905,51 +951,55 @@ tcl_RepStat(interp, objc, objv, dbenv)
 	 * MAKE_STAT_* assumes 'res' and 'error' label.
 	 */
 	if (sp->st_status == DB_REP_MASTER)
-		MAKE_STAT_LIST("Master", 1);
+		role = "master";
+	else if (sp->st_status == DB_REP_CLIENT)
+		role = "client";
 	else
-		MAKE_STAT_LIST("Client", 1);
+		role = "none";
+	MAKE_STAT_STRLIST("Role", role);
+
 	MAKE_STAT_LSN("Next LSN expected", &sp->st_next_lsn);
 	MAKE_STAT_LSN("First missed LSN", &sp->st_waiting_lsn);
 	MAKE_STAT_LSN("Maximum permanent LSN", &sp->st_max_perm_lsn);
-	MAKE_STAT_LIST("Bulk buffer fills", sp->st_bulk_fills);
-	MAKE_STAT_LIST("Bulk buffer overflows", sp->st_bulk_overflows);
-	MAKE_STAT_LIST("Bulk records stored", sp->st_bulk_records);
-	MAKE_STAT_LIST("Bulk buffer transfers", sp->st_bulk_transfers);
-	MAKE_STAT_LIST("Client service requests", sp->st_client_svc_req);
-	MAKE_STAT_LIST("Client service req misses", sp->st_client_svc_miss);
-	MAKE_STAT_LIST("Client rerequests", sp->st_client_rerequests);
+	MAKE_WSTAT_LIST("Bulk buffer fills", sp->st_bulk_fills);
+	MAKE_WSTAT_LIST("Bulk buffer overflows", sp->st_bulk_overflows);
+	MAKE_WSTAT_LIST("Bulk records stored", sp->st_bulk_records);
+	MAKE_WSTAT_LIST("Bulk buffer transfers", sp->st_bulk_transfers);
+	MAKE_WSTAT_LIST("Client service requests", sp->st_client_svc_req);
+	MAKE_WSTAT_LIST("Client service req misses", sp->st_client_svc_miss);
+	MAKE_WSTAT_LIST("Client rerequests", sp->st_client_rerequests);
 	MAKE_STAT_LIST("Duplicate master conditions", sp->st_dupmasters);
 	MAKE_STAT_LIST("Environment ID", sp->st_env_id);
 	MAKE_STAT_LIST("Environment priority", sp->st_env_priority);
 	MAKE_STAT_LIST("Generation number", sp->st_gen);
 	MAKE_STAT_LIST("Election generation number", sp->st_egen);
 	MAKE_STAT_LIST("Startup complete", sp->st_startup_complete);
-	MAKE_STAT_LIST("Duplicate log records received", sp->st_log_duplicated);
-	MAKE_STAT_LIST("Current log records queued", sp->st_log_queued);
-	MAKE_STAT_LIST("Maximum log records queued", sp->st_log_queued_max);
-	MAKE_STAT_LIST("Total log records queued", sp->st_log_queued_total);
-	MAKE_STAT_LIST("Log records received", sp->st_log_records);
-	MAKE_STAT_LIST("Log records requested", sp->st_log_requested);
+	MAKE_WSTAT_LIST("Duplicate log records received", sp->st_log_duplicated);
+	MAKE_WSTAT_LIST("Current log records queued", sp->st_log_queued);
+	MAKE_WSTAT_LIST("Maximum log records queued", sp->st_log_queued_max);
+	MAKE_WSTAT_LIST("Total log records queued", sp->st_log_queued_total);
+	MAKE_WSTAT_LIST("Log records received", sp->st_log_records);
+	MAKE_WSTAT_LIST("Log records requested", sp->st_log_requested);
 	MAKE_STAT_LIST("Master environment ID", sp->st_master);
-	MAKE_STAT_LIST("Master changes", sp->st_master_changes);
+	MAKE_WSTAT_LIST("Master changes", sp->st_master_changes);
 	MAKE_STAT_LIST("Messages with bad generation number",
 	    sp->st_msgs_badgen);
-	MAKE_STAT_LIST("Messages processed", sp->st_msgs_processed);
-	MAKE_STAT_LIST("Messages ignored for recovery", sp->st_msgs_recover);
-	MAKE_STAT_LIST("Message send failures", sp->st_msgs_send_failures);
-	MAKE_STAT_LIST("Messages sent", sp->st_msgs_sent);
-	MAKE_STAT_LIST("New site messages", sp->st_newsites);
+	MAKE_WSTAT_LIST("Messages processed", sp->st_msgs_processed);
+	MAKE_WSTAT_LIST("Messages ignored for recovery", sp->st_msgs_recover);
+	MAKE_WSTAT_LIST("Message send failures", sp->st_msgs_send_failures);
+	MAKE_WSTAT_LIST("Messages sent", sp->st_msgs_sent);
+	MAKE_WSTAT_LIST("New site messages", sp->st_newsites);
 	MAKE_STAT_LIST("Number of sites in replication group", sp->st_nsites);
-	MAKE_STAT_LIST("Transmission limited", sp->st_nthrottles);
-	MAKE_STAT_LIST("Outdated conditions", sp->st_outdated);
-	MAKE_STAT_LIST("Transactions applied", sp->st_txns_applied);
+	MAKE_WSTAT_LIST("Transmission limited", sp->st_nthrottles);
+	MAKE_WSTAT_LIST("Outdated conditions", sp->st_outdated);
+	MAKE_WSTAT_LIST("Transactions applied", sp->st_txns_applied);
 	MAKE_STAT_LIST("Next page expected", sp->st_next_pg);
-	MAKE_STAT_LIST("First missed page", sp->st_waiting_pg);
-	MAKE_STAT_LIST("Duplicate pages received", sp->st_pg_duplicated);
-	MAKE_STAT_LIST("Pages received", sp->st_pg_records);
-	MAKE_STAT_LIST("Pages requested", sp->st_pg_requested);
-	MAKE_STAT_LIST("Elections held", sp->st_elections);
-	MAKE_STAT_LIST("Elections won", sp->st_elections_won);
+	MAKE_WSTAT_LIST("First missed page", sp->st_waiting_pg);
+	MAKE_WSTAT_LIST("Duplicate pages received", sp->st_pg_duplicated);
+	MAKE_WSTAT_LIST("Pages received", sp->st_pg_records);
+	MAKE_WSTAT_LIST("Pages requested", sp->st_pg_requested);
+	MAKE_WSTAT_LIST("Elections held", sp->st_elections);
+	MAKE_WSTAT_LIST("Elections won", sp->st_elections_won);
 	MAKE_STAT_LIST("Election phase", sp->st_election_status);
 	MAKE_STAT_LIST("Election winner", sp->st_election_cur_winner);
 	MAKE_STAT_LIST("Election generation number", sp->st_election_gen);
@@ -965,6 +1015,7 @@ tcl_RepStat(interp, objc, objv, dbenv)
 	    sp->st_startsync_delayed);
 	MAKE_STAT_LIST("Maximum lease seconds", sp->st_max_lease_sec);
 	MAKE_STAT_LIST("Maximum lease usecs", sp->st_max_lease_usec);
+	MAKE_STAT_LIST("File fail cleanups done", sp->st_filefail_cleanups);
 #endif
 
 	Tcl_SetObjResult(interp, res);
@@ -1210,12 +1261,18 @@ tcl_RepMgr(interp, objc, objv, dbenv)
 			arg = Tcl_GetStringFromObj(myobjv[0], NULL);
 			if (strcmp(arg, "ack") == 0)
 				totype = DB_REP_ACK_TIMEOUT;
+			else if (strcmp(arg, "conn_retry") == 0)
+				totype = DB_REP_CONNECTION_RETRY;
 			else if (strcmp(arg, "elect") == 0)
 				totype = DB_REP_ELECTION_TIMEOUT;
 			else if (strcmp(arg, "elect_retry") == 0)
 				totype = DB_REP_ELECTION_RETRY;
-			else if (strcmp(arg, "conn_retry") == 0)
-				totype = DB_REP_CONNECTION_RETRY;
+			else if (strcmp(arg, "full_elect") == 0)
+				totype = DB_REP_FULL_ELECTION_TIMEOUT;
+			else if (strcmp(arg, "heartbeat_monitor") == 0)
+				totype = DB_REP_HEARTBEAT_MONITOR;
+			else if (strcmp(arg, "heartbeat_send") == 0)
+				totype = DB_REP_HEARTBEAT_SEND;
 			else {
 				Tcl_AddErrorInfo(interp,
 				    "timeout: illegal type");
@@ -1247,9 +1304,72 @@ tcl_RepMgr(interp, objc, objv, dbenv)
 		_debug_check();
 		ret = dbenv->repmgr_start(dbenv, (int)msgth, start_flag);
 		result = _ReturnSetup(
-		    interp, ret, DB_RETOK_STD(ret), "repmgr_start");
+		    interp, ret, DB_RETOK_REPMGR_START(ret), "repmgr_start");
 	}
 error:
+	return (result);
+}
+
+/*
+ * tcl_RepMgrSiteList --
+ *	Call DB_ENV->repmgr_site_list().
+ *
+ * PUBLIC: int tcl_RepMgrSiteList
+ * PUBLIC:     __P((Tcl_Interp *, int, Tcl_Obj * CONST *, DB_ENV *));
+ */
+int
+tcl_RepMgrSiteList(interp, objc, objv, dbenv)
+	Tcl_Interp *interp;		/* Interpreter */
+	int objc;			/* How many arguments? */
+	Tcl_Obj *CONST objv[];		/* The argument objects */
+	DB_ENV *dbenv;
+{
+	DB_REPMGR_SITE *sp;
+	Tcl_Obj *myobjv[5], *res, *thislist;
+	u_int count, i;
+	char *pr, *st;
+	int myobjc, result, ret;
+
+	result = TCL_OK;
+
+	if (objc > 2) {
+		Tcl_WrongNumArgs(interp, 2, objv, NULL);
+		return (TCL_ERROR);
+	}
+
+	_debug_check();
+	ret = dbenv->repmgr_site_list(dbenv, &count, &sp);
+	result = _ReturnSetup(interp, ret, DB_RETOK_STD(ret),
+	    "repmgr sitelist");
+	if (result == TCL_ERROR)
+		return (result);
+
+	/*
+	 * Have our sites, now construct the {eid host port status peer}
+	 * tuples and free up the memory.
+	 */
+	res = Tcl_NewObj();
+
+	for (i = 0; i < count; ++i) {
+		/*
+		 * MAKE_SITE_LIST assumes 'res' and 'error' label.
+		 */
+		if (sp[i].status == DB_REPMGR_CONNECTED)
+			st = "connected";
+		else if (sp[i].status == DB_REPMGR_DISCONNECTED)
+			st = "disconnected";
+		else
+			st = "unknown";
+		if (F_ISSET(&sp[i], DB_REPMGR_ISPEER))
+			pr = "peer";
+		else
+			pr = "non-peer";
+		MAKE_SITE_LIST(sp[i].eid, sp[i].host, sp[i].port, st, pr);
+	}
+
+	Tcl_SetObjResult(interp, res);
+error:
+	__os_ufree(dbenv->env, sp);
 	return (result);
 }
 
@@ -1307,16 +1427,84 @@ tcl_RepMgrStat(interp, objc, objv, dbenv)
 	/*
 	 * MAKE_STAT_* assumes 'res' and 'error' label.
 	 */
-	MAKE_STAT_LIST("Acknowledgement failures", sp->st_perm_failed);
-	MAKE_STAT_LIST("Messages delayed", sp->st_msgs_queued);
-	MAKE_STAT_LIST("Messages discarded", sp->st_msgs_dropped);
-	MAKE_STAT_LIST("Connections dropped", sp->st_connection_drop);
-	MAKE_STAT_LIST("Failed re-connects", sp->st_connect_fail);
+	MAKE_WSTAT_LIST("Acknowledgement failures", sp->st_perm_failed);
+	MAKE_WSTAT_LIST("Messages delayed", sp->st_msgs_queued);
+	MAKE_WSTAT_LIST("Messages discarded", sp->st_msgs_dropped);
+	MAKE_WSTAT_LIST("Connections dropped", sp->st_connection_drop);
+	MAKE_WSTAT_LIST("Failed re-connects", sp->st_connect_fail);
+	MAKE_WSTAT_LIST("Election threads", sp->st_elect_threads);
+	MAKE_WSTAT_LIST("Max elect threads", sp->st_max_elect_threads);
 #endif
 
 	Tcl_SetObjResult(interp, res);
 error:
 	__os_ufree(dbenv->env, sp);
+	return (result);
+}
+
+/*
+ * tcl_RepApplied -
+ *
+ * PUBLIC: int tcl_RepApplied
+ * PUBLIC:     __P((Tcl_Interp *, int, Tcl_Obj * CONST *, DB_ENV *));
+ */
+int
+tcl_RepApplied(interp, objc, objv, dbenv)
+	Tcl_Interp *interp;		/* Interpreter */
+	int objc;			/* How many arguments? */
+	Tcl_Obj *CONST objv[];		/* The argument objects */
+	DB_ENV *dbenv;
+{
+	static const char *repapplied_option_names[] = {
+		"-timeout",
+		NULL
+	};
+	enum envinfo_options {
+		REPAPPLIEDTIMEOUT
+	};
+	unsigned char *arg;
+	char msg[MSG_SIZE];
+	db_timeout_t timeout;
+	int i, len, ptr, result, ret;
+
+	if (objc != 3 && objc != 5) {
+		Tcl_WrongNumArgs(interp, 2, objv,
+		    "?-timeout t? token");
+		return (TCL_ERROR);
+	}
+	timeout = 0;
+	i = 2;
+	if (objc == 5) {
+		if (Tcl_GetIndexFromObj(interp, objv[i],
+		    repapplied_option_names, "option", TCL_EXACT, &ptr)
+		    != TCL_OK)
+			return (IS_HELP(objv[i]));
+		i++;
+		switch ((enum envinfo_options)ptr) {
+		case REPAPPLIEDTIMEOUT:
+			result = _GetUInt32(interp, objv[i++], &timeout);
+			if (result != TCL_OK)
+				return (result);
+			break;
+		}
+	}
+
+	arg = Tcl_GetByteArrayFromObj(objv[i], &len);
+	if (len != DB_TXN_TOKEN_SIZE) {
+		Tcl_SetErrorCode(interp, "BerkeleyDB",
+		    "Commit token is the wrong size", NULL);
+
+		snprintf(msg, MSG_SIZE,
+		    "Bad commit token size %lu, should be %lu",
+		    (u_long)len, (u_long)DB_TXN_TOKEN_SIZE);
+		Tcl_SetResult(interp, msg, TCL_VOLATILE);
+		return (TCL_ERROR);
+	}		
+
+	_debug_check();
+	ret = dbenv->txn_applied(dbenv, (DB_TXN_TOKEN*)arg, timeout, 0);
+	result = _ReturnSetup(interp, ret , DB_RETOK_TXNAPPLIED(ret),
+	    "txn_applied");
 	return (result);
 }
 #endif

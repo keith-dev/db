@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: lock.c,v 12.59 2008/05/07 12:27:35 bschmeck Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -21,7 +21,7 @@ static int  __lock_getobj
 static int __lock_get_api __P((ENV *,
 		u_int32_t, u_int32_t, const DBT *, db_lockmode_t, DB_LOCK *));
 static int  __lock_inherit_locks __P ((DB_LOCKTAB *, DB_LOCKER *, u_int32_t));
-static int  __lock_is_parent __P((DB_LOCKTAB *, roff_t, DB_LOCKER *));
+static int  __lock_same_family __P((DB_LOCKTAB *, DB_LOCKER *, DB_LOCKER *));
 static int  __lock_put_internal __P((DB_LOCKTAB *,
 		struct __db_lock *, u_int32_t,  u_int32_t));
 static int  __lock_put_nolock __P((ENV *, DB_LOCK *, int *, u_int32_t));
@@ -367,13 +367,13 @@ __lock_vec(env, sh_locker, flags, list, nlist, elistp)
  *	ENV->lock_get pre/post processing.
  *
  * PUBLIC: int __lock_get_pp __P((DB_ENV *,
- * PUBLIC:     u_int32_t, u_int32_t, const DBT *, db_lockmode_t, DB_LOCK *));
+ * PUBLIC:     u_int32_t, u_int32_t, DBT *, db_lockmode_t, DB_LOCK *));
  */
 int
 __lock_get_pp(dbenv, locker, flags, obj, lock_mode, lock)
 	DB_ENV *dbenv;
 	u_int32_t locker, flags;
-	const DBT *obj;
+	DBT *obj;
 	db_lockmode_t lock_mode;
 	DB_LOCK *lock;
 {
@@ -389,6 +389,9 @@ __lock_get_pp(dbenv, locker, flags, obj, lock_mode, lock)
 	/* Validate arguments. */
 	if ((ret = __db_fchk(env, "DB_ENV->lock_get", flags,
 	    DB_LOCK_NOWAIT | DB_LOCK_UPGRADE | DB_LOCK_SWITCH)) != 0)
+		return (ret);
+
+	if ((ret = __dbt_usercopy(env, obj)) != 0)
 		return (ret);
 
 	ENV_ENTER(env, ip);
@@ -460,7 +463,8 @@ __lock_get(env, locker, flags, obj, lock_mode, lock)
 /*
  * __lock_alloclock -- allocate a lock from another partition.
  *	We assume we have the partition locked on entry and leave
- * it unlocked on exit since we will have to retry the lock operation.
+ * it unlocked on success since we will have to retry the lock operation.
+ * The mutex will be locked if we are out of space.
  */
 static int
 __lock_alloclock(lt, part_id)
@@ -509,6 +513,9 @@ again:	for (cur_p++; sh_lock == NULL && cur_p < end_p; cur_p++) {
 		end_p = &lt->part_array[part_id];
 		goto again;
 	}
+
+	cur_p = &lt->part_array[part_id];
+	MUTEX_LOCK(lt->env, cur_p->mtx_part);
 
 err:	return (__lock_nomem(lt->env, "lock entries"));
 }
@@ -569,7 +576,7 @@ __lock_get_internal(lt, sh_locker, flags, obj, lock_mode, timeout, lock)
 	sh_obj = NULL;
 
 	/* Check that the lock mode is valid.  */
-	if (lock_mode >= (db_lockmode_t)region->stat.st_nmodes) {
+	if (lock_mode >= (db_lockmode_t)region->nmodes) {
 		__db_errx(env, "DB_ENV->lock_get: invalid lock mode %lu",
 		    (u_long)lock_mode);
 		return (EINVAL);
@@ -659,7 +666,8 @@ again:	if (obj == NULL) {
 			} else {
 				ihold = 1;
 			}
-		} else if (__lock_is_parent(lt, lp->holder, sh_locker))
+		} else if (__lock_same_family(lt,
+		    R_ADDR(&lt->reginfo, lp->holder), sh_locker))
 			ihold = 1;
 		else if (CONFLICTS(lt, region, lp->mode, lock_mode))
 			break;
@@ -687,16 +695,15 @@ again:	if (obj == NULL) {
 			action = TAIL;
 		else if (LF_ISSET(DB_LOCK_UPGRADE))
 			action = UPGRADE;
-		else  if (ihold)
+		else if (ihold)
 			action = GRANT;
 		else {
 			/*
 			 * Look for conflicting waiters.
 			 */
-			SH_TAILQ_FOREACH(
-			    lp, &sh_obj->waiters, links, __db_lock)
-				if (CONFLICTS(lt, region, lp->mode,
-				     lock_mode) && sh_off != lp->holder)
+			SH_TAILQ_FOREACH(lp, &sh_obj->waiters, links, __db_lock)
+				if (lp->holder != sh_off &&
+				    CONFLICTS(lt, region, lp->mode, lock_mode))
 					break;
 
 			/*
@@ -783,23 +790,6 @@ again:	if (obj == NULL) {
 			    lt->part_array[part_id].part_stat.st_nlocks;
 #endif
 
-		/*
-		 * Allocate a mutex if we do not have a mutex backing the lock.
-		 *
-		 * Use the lock mutex to block the thread; lock the mutex
-		 * when it is allocated so that we will block when we try
-		 * to lock it again.  We will wake up when another thread
-		 * grants the lock and releases the mutex.  We leave it
-		 * locked for the next use of this lock object.
-		 */
-		if (newl->mtx_lock == MUTEX_INVALID) {
-			if ((ret = __mutex_alloc(env, MTX_LOGICAL_LOCK,
-			    DB_MUTEX_LOGICAL_LOCK | DB_MUTEX_SELF_BLOCK,
-			    &newl->mtx_lock)) != 0)
-				goto err;
-			MUTEX_LOCK(env, newl->mtx_lock);
-		}
-
 		newl->holder = R_OFFSET(&lt->reginfo, sh_locker);
 		newl->refcount = 1;
 		newl->mode = lock_mode;
@@ -818,6 +808,23 @@ again:	if (obj == NULL) {
 
 		SH_LIST_INSERT_HEAD(
 		    &sh_locker->heldby, newl, locker_links, __db_lock);
+
+		/*
+		 * Allocate a mutex if we do not have a mutex backing the lock.
+		 *
+		 * Use the lock mutex to block the thread; lock the mutex
+		 * when it is allocated so that we will block when we try
+		 * to lock it again.  We will wake up when another thread
+		 * grants the lock and releases the mutex.  We leave it
+		 * locked for the next use of this lock object.
+		 */
+		if (newl->mtx_lock == MUTEX_INVALID) {
+			if ((ret = __mutex_alloc(env, MTX_LOGICAL_LOCK,
+			    DB_MUTEX_LOGICAL_LOCK | DB_MUTEX_SELF_BLOCK,
+			    &newl->mtx_lock)) != 0)
+				goto err;
+			MUTEX_LOCK(env, newl->mtx_lock);
+		}
 		break;
 
 	case UPGRADE:
@@ -874,7 +881,7 @@ upgrade:	lp = R_ADDR(&lt->reginfo, lock->off);
 		 * the txn expiration time.  lk_expire is passed
 		 * to avoid an extra call to get the time.
 		 */
-		if (__lock_expired(env,
+		if (__clock_expired(env,
 		    &sh_locker->lk_expire, &sh_locker->tx_expire)) {
 			newl->status = DB_LSTAT_EXPIRED;
 			sh_locker->lk_expire = sh_locker->tx_expire;
@@ -896,12 +903,13 @@ upgrade:	lp = R_ADDR(&lt->reginfo, lock->off);
 				timeout = region->lk_timeout;
 		}
 		if (timeout != 0)
-			__lock_expires(env, &sh_locker->lk_expire, timeout);
+			__clock_set_expires(env,
+			    &sh_locker->lk_expire, timeout);
 		else
 			timespecclear(&sh_locker->lk_expire);
 
 		if (timespecisset(&sh_locker->tx_expire) &&
-			(timeout == 0 || __lock_expired(env,
+			(timeout == 0 || __clock_expired(env,
 			    &sh_locker->lk_expire, &sh_locker->tx_expire)))
 				sh_locker->lk_expire = sh_locker->tx_expire;
 		if (timespecisset(&sh_locker->lk_expire) &&
@@ -910,7 +918,7 @@ upgrade:	lp = R_ADDR(&lt->reginfo, lock->off);
 		    &region->next_timeout, &sh_locker->lk_expire, >)))
 			region->next_timeout = sh_locker->lk_expire;
 
-		newl->status = DB_LSTAT_WAITING;
+in_abort:	newl->status = DB_LSTAT_WAITING;
 		STAT(lt->obj_stat[ndx].st_lock_wait++);
 		/* We are about to block, deadlock detector must run. */
 		region->need_dd = 1;
@@ -956,6 +964,13 @@ upgrade:	lp = R_ADDR(&lt->reginfo, lock->off);
 
 		switch (newl->status) {
 		case DB_LSTAT_ABORTED:
+			/*
+			 * If we raced with the deadlock detector and it
+			 * mistakenly picked this tranaction to abort again
+			 * ignore the abort and request the lock again.
+			 */
+			if (F_ISSET(sh_locker, DB_LOCKER_INABORT))
+				goto in_abort;
 			ret = DB_LOCK_DEADLOCK;
 			goto err;
 		case DB_LSTAT_EXPIRED:
@@ -1274,10 +1289,12 @@ __lock_put_internal(lt, lockp, obj_ndx, flags)
 		SH_TAILQ_REMOVE(
 		    &lt->obj_tab[obj_ndx], sh_obj, links, __db_lockobj);
 		if (sh_obj->lockobj.size > sizeof(sh_obj->objdata)) {
-			LOCK_REGION_LOCK(env);
+			if (region->part_t_size != 1)
+				LOCK_REGION_LOCK(env);
 			__env_alloc_free(&lt->reginfo,
 			    SH_DBT_PTR(&sh_obj->lockobj));
-			LOCK_REGION_UNLOCK(env);
+			if (region->part_t_size != 1)
+				LOCK_REGION_UNLOCK(env);
 		}
 		SH_TAILQ_INSERT_HEAD(
 		    &FREE_OBJS(lt, part_id), sh_obj, links, __db_lockobj);
@@ -1324,7 +1341,6 @@ __lock_freelock(lt, lockp, sh_locker, flags)
 	region = lt->reginfo.primary;
 
 	if (LF_ISSET(DB_LOCK_UNLINK)) {
-
 		SH_LIST_REMOVE(lockp, locker_links, __db_lock);
 		if (lockp->status == DB_LSTAT_HELD) {
 			sh_locker->nlocks--;
@@ -1467,15 +1483,21 @@ retry:	SH_TAILQ_FOREACH(sh_obj, &lt->obj_tab[ndx], links, __db_lockobj) {
 		if (obj->size <= sizeof(sh_obj->objdata))
 			p = sh_obj->objdata;
 		else {
-			LOCK_REGION_LOCK(env);
+			/*
+			 * If we have only one partition, the region is locked.
+			 */
+			if (region->part_t_size != 1)
+				LOCK_REGION_LOCK(env);
 			if ((ret =
 			    __env_alloc(&lt->reginfo, obj->size, &p)) != 0) {
 				__db_errx(env,
 				    "No space for lock object storage");
-				LOCK_REGION_UNLOCK(env);
+				if (region->part_t_size != 1)
+					LOCK_REGION_UNLOCK(env);
 				goto err;
 			}
-			LOCK_REGION_UNLOCK(env);
+			if (region->part_t_size != 1)
+				LOCK_REGION_UNLOCK(env);
 		}
 
 		memcpy(p, obj->data, obj->size);
@@ -1526,43 +1548,56 @@ err:	return (ret);
 }
 
 /*
- * __lock_is_parent --
- *	Given a locker and a transaction, return 1 if the locker is
- * an ancestor of the designated transaction.  This is used to determine
- * if we should grant locks that appear to conflict, but don't because
- * the lock is already held by an ancestor.
+ * __lock_same_family --
+ *	Looks for compatible lockers. There are two modes:
+ *	1) If the lockers 2 belongs to a family transaction, then the locks are
+ *	   compatible if the lockers share the same last ancestor.
+ *	2) Otherwise the lockers are compatible if locker 1 is a parent of
+ *	   locker 2.
+ *	Return 1 if the lockers are compatible.
+ *
+ * This is used to determine if we should grant locks that appear to conflict,
+ * but don't because the lock is already held by a compatible locker.
  */
 static int
-__lock_is_parent(lt, l_off, sh_locker)
+__lock_same_family(lt, sh_locker1, sh_locker2)
 	DB_LOCKTAB *lt;
-	roff_t l_off;
-	DB_LOCKER *sh_locker;
+	DB_LOCKER *sh_locker1;
+	DB_LOCKER *sh_locker2;
 {
-	DB_LOCKER *parent;
-
-	parent = sh_locker;
-	while (parent->parent_locker != INVALID_ROFF) {
-		if (parent->parent_locker == l_off)
+	while (sh_locker2->parent_locker != INVALID_ROFF) {
+		sh_locker2 = R_ADDR(&lt->reginfo, sh_locker2->parent_locker);
+		if (sh_locker2 == sh_locker1)
 			return (1);
-		parent = R_ADDR(&lt->reginfo, parent->parent_locker);
 	}
 
-	return (0);
+	if (!F_ISSET(sh_locker2, DB_LOCKER_FAMILY_LOCKER))
+		return (0);
+
+	/*
+	 * If checking for a family locker situation, compare the last ancestor
+	 * of each locker.
+	 */
+	while (sh_locker1->parent_locker != INVALID_ROFF)
+		sh_locker1 =
+		    R_ADDR(&lt->reginfo, sh_locker1->parent_locker);
+
+	return (sh_locker1 == sh_locker2);
 }
 
 /*
- * __lock_locker_is_parent --
+ * __lock_locker_same_family --
  *	Determine if "locker" is an ancestor of "child".
  * *retp == 1 if so, 0 otherwise.
  *
- * PUBLIC: int __lock_locker_is_parent
+ * PUBLIC: int __lock_locker_same_family
  * PUBLIC:     __P((ENV *, DB_LOCKER *, DB_LOCKER *, int *));
  */
 int
-__lock_locker_is_parent(env, locker, child, retp)
+__lock_locker_same_family(env, locker1, locker2, retp)
 	ENV *env;
-	DB_LOCKER *locker;
-	DB_LOCKER *child;
+	DB_LOCKER *locker1;
+	DB_LOCKER *locker2;
 	int *retp;
 {
 	DB_LOCKTAB *lt;
@@ -1573,11 +1608,10 @@ __lock_locker_is_parent(env, locker, child, retp)
 	 * The locker may not exist for this transaction, if not then it has
 	 * no parents.
 	 */
-	if (locker == NULL)
+	if (locker1 == NULL)
 		*retp = 0;
 	else
-		*retp = __lock_is_parent(lt,
-		     R_OFFSET(&lt->reginfo, locker), child);
+		*retp = __lock_same_family(lt, locker1, locker2);
 	return (0);
 }
 
@@ -1654,6 +1688,9 @@ __lock_inherit_locks(lt, sh_locker, flags)
 			SH_LIST_INSERT_HEAD(&sh_parent->heldby,
 			    lp, locker_links, __db_lock);
 			lp->holder = poff;
+			sh_parent->nlocks++;
+			if (IS_WRITELOCK(lp->mode))
+				sh_parent->nwrites++;
 		}
 
 		/*
@@ -1668,10 +1705,6 @@ __lock_inherit_locks(lt, sh_locker, flags)
 		if (ret != 0)
 			return (ret);
 	}
-
-	/* Transfer child counts to parent. */
-	sh_parent->nlocks += sh_locker->nlocks;
-	sh_parent->nwrites += sh_locker->nwrites;
 
 	return (0);
 }
@@ -1729,7 +1762,8 @@ __lock_promote(lt, obj, state_changedp, flags)
 		SH_TAILQ_FOREACH(lp_h, &obj->holders, links, __db_lock) {
 			if (lp_h->holder != lp_w->holder &&
 			    CONFLICTS(lt, region, lp_h->mode, lp_w->mode)) {
-				if (!__lock_is_parent(lt, lp_h->holder,
+				if (!__lock_same_family(lt,
+				     R_ADDR(&lt->reginfo, lp_h->holder),
 				     R_ADDR(&lt->reginfo, lp_w->holder)))
 					break;
 			}
@@ -1855,4 +1889,84 @@ __lock_trade(env, lock, new_locker)
 	lp->holder = R_OFFSET(&lt->reginfo, new_locker);
 
 	return (0);
+}
+
+/*
+ * __lock_change --
+ *
+ * PUBLIC: int __lock_change __P((ENV *, DB_LOCK *, DB_LOCK *));
+ *
+ * Change a lock to a different object.  This is used when we move a 
+ * metadata page to change the handle lock.  We know that the new lock
+ * has replaced the old lock so we just delete that lock.
+ */
+int
+__lock_change(env, old_lock, new_lock)
+	ENV *env;
+	DB_LOCK *old_lock, *new_lock;
+{
+	struct __db_lock *lp, *old_lp;
+	DB_LOCKOBJ *old_obj, *new_obj;
+	DB_LOCKTAB *lt;
+	DB_LOCKREGION *region;
+	u_int32_t old_part, new_part;
+	int ret;
+
+	lt = env->lk_handle;
+	region = lt->reginfo.primary;
+	
+	old_lp = R_ADDR(&lt->reginfo, old_lock->off);
+	DB_ASSERT(env, old_lp->gen == old_lock->gen);
+	old_obj = (DB_LOCKOBJ *)((u_int8_t *)old_lp + old_lp->obj);
+
+	lp = R_ADDR(&lt->reginfo, new_lock->off);
+	DB_ASSERT(env, lp->gen == new_lock->gen);
+	new_obj = (DB_LOCKOBJ *)((u_int8_t *)lp + lp->obj);
+
+	/* Don't deadlock on partition mutexes, order the latches. */
+	LOCK_SYSTEM_LOCK(lt, region);
+	old_part =  LOCK_PART(region, old_obj->indx);
+	new_part =  LOCK_PART(region, new_obj->indx);
+
+	if (old_part == new_part)
+		MUTEX_LOCK_PARTITION(lt, region, old_part);
+	else if (new_obj->indx < old_obj->indx) {
+		MUTEX_LOCK_PARTITION(lt, region, new_part);
+		MUTEX_LOCK_PARTITION(lt, region, old_part);
+	} else  {
+		MUTEX_LOCK_PARTITION(lt, region, old_part);
+		MUTEX_LOCK_PARTITION(lt, region, new_part);
+	}
+
+	for (lp = SH_TAILQ_FIRST(&old_obj->waiters, __db_lock);
+	    lp != NULL;
+	    lp = SH_TAILQ_FIRST(&old_obj->waiters, __db_lock)) {
+		SH_TAILQ_REMOVE(&old_obj->waiters, lp, links, __db_lock);
+		SH_TAILQ_INSERT_TAIL(&new_obj->waiters, lp, links);
+		lp->indx = new_obj->indx;
+		lp->obj = (roff_t)SH_PTR_TO_OFF(lp, new_obj);
+	}
+
+	for (lp = SH_TAILQ_FIRST(&old_obj->holders, __db_lock);
+	    lp != NULL;
+	    lp = SH_TAILQ_FIRST(&old_obj->holders, __db_lock)) {
+		SH_TAILQ_REMOVE(&old_obj->holders, lp, links, __db_lock);
+	    	if (lp == old_lp)
+			continue;
+		SH_TAILQ_INSERT_TAIL(&new_obj->holders, lp, links);
+		lp->indx = new_obj->indx;
+		lp->obj = (roff_t)SH_PTR_TO_OFF(lp, new_obj);
+	}
+
+	/* Put the lock back in and call put so the object goes away too. */
+	SH_TAILQ_INSERT_TAIL(&old_obj->holders, old_lp, links);
+	ret = __lock_put_internal(lt, old_lp, old_obj->indx,
+	     DB_LOCK_UNLINK | DB_LOCK_FREE | DB_LOCK_NOPROMOTE);
+
+	MUTEX_UNLOCK_PARTITION(lt, region, new_part);
+	if (new_part != old_part)
+		MUTEX_UNLOCK_PARTITION(lt, region, old_part);
+	LOCK_SYSTEM_UNLOCK(lt, region);
+
+	return (ret);
 }

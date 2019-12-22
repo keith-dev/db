@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1997, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: os_seek.c,v 12.16 2008/01/08 20:58:43 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -15,7 +15,7 @@
  *	Seek to a page/byte offset in the file.
  *
  * PUBLIC: int __os_seek __P((ENV *,
- * PUBLIC:      DB_FH *, db_pgno_t, u_int32_t, u_int32_t));
+ * PUBLIC:      DB_FH *, db_pgno_t, u_int32_t, off_t));
  */
 int
 __os_seek(env, fhp, pgno, pgsize, relative)
@@ -23,7 +23,7 @@ __os_seek(env, fhp, pgno, pgsize, relative)
 	DB_FH *fhp;
 	db_pgno_t pgno;
 	u_int32_t pgsize;
-	u_int32_t relative;
+	off_t relative;
 {
 	DB_ENV *dbenv;
 	off_t offset;

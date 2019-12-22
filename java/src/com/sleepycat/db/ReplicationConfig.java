@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: ReplicationConfig.java,v 12.13 2008/04/23 17:20:53 bschmeck Exp $
+ * $Id$
  */
 
 package com.sleepycat.db;
@@ -32,11 +32,18 @@ public final class ReplicationConfig implements Cloneable {
       new ReplicationConfig("DELAYCLIENT", DbConstants.DB_REP_CONF_DELAYCLIENT);
 
     /**
-    The replication master should not automatically re-initialize outdated
-    clients.
+    The client should keep all replication related information in memory
+    (defaults to off).
     **/
-    public static final ReplicationConfig NOAUTOINIT =
-        new ReplicationConfig("NOAUTOINIT", DbConstants.DB_REP_CONF_NOAUTOINIT);
+    public static final ReplicationConfig INMEM =
+      new ReplicationConfig("INMEM", DbConstants.DB_REP_CONF_INMEM);
+
+    /**
+    The replication master should automatically re-initialize outdated
+    clients (defaults to on.)
+    **/
+    public static final ReplicationConfig AUTOINIT =
+        new ReplicationConfig("AUTOINIT", DbConstants.DB_REP_CONF_AUTOINIT);
 
     /**
     Berkeley DB method calls that would normally block while clients are in
@@ -50,13 +57,22 @@ public final class ReplicationConfig implements Cloneable {
     elections, even in a group with only 2 sites.  This means the client in a
     2-site group will be unable to take over as master if the original master
     fails or becomes disconnected.  (See the
-    <a href="{@docRoot}/../ref/rep/elect.html" target="_top">Elections</a>
+    <a href="{@docRoot}/../programmer_reference/rep_elect.html" target="_top">Elections</a>
     section in the Berkeley DB Reference Guide for more information.)  Both sites
     in the replication group should have the same value for this parameter.
     **/
     public static final ReplicationConfig STRICT_2SITE =
         new ReplicationConfig("STRICT_2SITE",
                               DbConstants.DB_REPMGR_CONF_2SITE_STRICT);
+
+    /**
+    Replication Manager automatically runs elections to choose a new
+    master when the old master appears to have become disconnected.
+    This option is turned on by default.
+     */
+    public static final ReplicationConfig ELECTIONS =
+        new ReplicationConfig("ELECTIONS",
+                              DbConstants.DB_REPMGR_CONF_ELECTIONS);
 
     /** 
     Master leases will be used for this site.
@@ -78,12 +94,16 @@ public final class ReplicationConfig implements Cloneable {
             return BULK;
         case DbConstants.DB_REP_CONF_DELAYCLIENT:
             return DELAYCLIENT;
-        case DbConstants.DB_REP_CONF_NOAUTOINIT:
-            return NOAUTOINIT;
+        case DbConstants.DB_REP_CONF_INMEM:
+            return INMEM;
+        case DbConstants.DB_REP_CONF_AUTOINIT:
+            return AUTOINIT;
         case DbConstants.DB_REP_CONF_NOWAIT:
             return NOWAIT;
         case DbConstants.DB_REPMGR_CONF_2SITE_STRICT:
             return STRICT_2SITE;
+        case DbConstants.DB_REPMGR_CONF_ELECTIONS:
+            return ELECTIONS;
 	case DbConstants.DB_REP_CONF_LEASE:
 	    return LEASE;
         default:

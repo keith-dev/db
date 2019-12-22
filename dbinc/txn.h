@@ -1,15 +1,13 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: txn.h,v 12.20 2008/01/08 20:58:18 bostic Exp $
+ * $Id$
  */
 
 #ifndef	_DB_TXN_H_
 #define	_DB_TXN_H_
-
-#include "dbinc/xa.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -37,6 +35,8 @@ struct __txn_logrec;	typedef struct __txn_logrec DB_TXNLOGREC;
 #define	DEF_MAX_TXNS	100		/* Default max transactions. */
 #define	TXN_NSLOTS	4		/* Initial slots to hold DB refs */
 
+#define	TXN_PRIORITY_DEFAULT	DB_LOCK_DEFPRIORITY
+
 /*
  * Internal data maintained in shared memory for each transaction.
  */
@@ -50,7 +50,7 @@ typedef struct __txn_detail {
 	DB_LSN	begin_lsn;		/* LSN of begin record. */
 	roff_t	parent;			/* Offset of transaction's parent. */
 	roff_t	name;			/* Offset of txn name. */
-
+	
 	u_int32_t	nlog_dbs;	/* Number of databases used. */
 	u_int32_t	nlog_slots;	/* Number of allocated slots. */
 	roff_t		log_dbs;	/* Databases used. */
@@ -62,6 +62,8 @@ typedef struct __txn_detail {
 	u_int32_t	mvcc_ref;	/* Number of buffers created by this
 					   transaction still in cache.  */
 
+	u_int32_t	priority;	/* Deadlock resolution priority. */
+
 	SH_TAILQ_HEAD(__tdkids)	kids;	/* Linked list of child txn detail. */
 	SH_TAILQ_ENTRY		klinks;
 
@@ -71,21 +73,12 @@ typedef struct __txn_detail {
 #define	TXN_DTL_COLLECTED	0x1	/* collected during txn_recover */
 #define	TXN_DTL_RESTORED	0x2	/* prepared txn restored */
 #define	TXN_DTL_INMEMORY	0x4	/* uses in memory logs */
+#define	TXN_DTL_SNAPSHOT	0x8	/* On the list of snapshot txns. */
 	u_int32_t flags;
 
-	/* TXN_XA_{ABORTED, DEADLOCKED, ENDED, PREPARED, STARTED, SUSPENDED} */
 	SH_TAILQ_ENTRY	links;		/* active/free/snapshot list */
 
-	u_int32_t xa_status;		/* XA status */
-
-	/*
-	 * XID (xid_t) structure: because these fields are logged, the
-	 * sizes have to be explicit.
-	 */
-	u_int8_t xid[XIDDATASIZE];	/* XA global transaction id */
-	u_int32_t bqual;		/* bqual_length from XID */
-	u_int32_t gtrid;		/* gtrid_length from XID */
-	int32_t format;			/* XA format */
+	u_int8_t gid[DB_GID_SIZE];	/* global transaction id */
 	roff_t slots[TXN_NSLOTS];	/* Initial DB slot allocation. */
 } TXN_DETAIL;
 
@@ -141,6 +134,18 @@ struct __db_txnregion {
 					/* active TXN list */
 	SH_TAILQ_HEAD(__active) active_txn;
 	SH_TAILQ_HEAD(__mvcc) mvcc_txn;
+};
+
+/*
+ * DB_COMMIT_INFO --
+ *	Meta-data uniquely describing a transaction commit across a replication
+ *	group.
+ */
+struct __db_commit_info {
+	u_int32_t	version;	/* Stored format version. */
+	u_int32_t	gen;		/* Replication master generation. */
+	u_int32_t	envid;		/* Unique env ID of master. */
+	DB_LSN		lsn;		/* LSN of commit log record. */
 };
 
 /*
@@ -235,5 +240,4 @@ struct __txn_logrec {
 
 #include "dbinc_auto/txn_auto.h"
 #include "dbinc_auto/txn_ext.h"
-#include "dbinc_auto/xa_ext.h"
 #endif /* !_DB_TXN_H_ */

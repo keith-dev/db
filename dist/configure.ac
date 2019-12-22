@@ -1,4 +1,4 @@
-# $Id: configure.ac,v 12.81 2008/05/06 03:03:36 david Exp $
+# $Id$
 # Process this file with autoconf to produce a configure script.
 
 PACKAGE=db
@@ -7,6 +7,11 @@ AC_INIT(Berkeley DB, __EDIT_DB_VERSION__,
 	db-__EDIT_DB_VERSION__)
 AC_CONFIG_SRCDIR([../db/db.c])
 AC_CONFIG_HEADERS([db_config.h:config.hin])
+
+AC_CONFIG_MACRO_DIR([aclocal])
+
+# We're going to pass options through to SQLite, don't check them first.
+AC_DISABLE_OPTION_CHECKING()
 
 # Configure setup.
 AC_CANONICAL_HOST()
@@ -24,7 +29,7 @@ from there.])
 fi
 AC_MSG_RESULT(no)
 
-# Substitution variables.
+# Substitution variables. BDB additions need to be documented.
 AC_SUBST(ADDITIONAL_INCS)
 AC_SUBST(ADDITIONAL_LANG)
 AC_SUBST(ADDITIONAL_OBJS)
@@ -42,8 +47,15 @@ AC_SUBST(DB_PROTO1)
 AC_SUBST(DB_PROTO2)
 AC_SUBST(DEFAULT_LIB)
 AC_SUBST(DEFAULT_LIB_CXX)
+AC_SUBST(DEFAULT_LIB_SQL)
+AC_SUBST(DEFAULT_LIB_SQLITE)
+AC_SUBST(DEFAULT_LIB_STL)
+AC_SUBST(DEFAULT_LIB_TCL)
+AC_SUBST(DTRACE)
+AC_SUBST(FINAL_OBJS)
 AC_SUBST(INSTALLER)
 AC_SUBST(INSTALL_LIBS)
+AC_SUBST(INSTALL_LIBS_EXTRA)
 AC_SUBST(INSTALL_TARGET)
 AC_SUBST(JAR)
 AC_SUBST(JAVACFLAGS)
@@ -70,10 +82,13 @@ AC_SUBST(REPLACEMENT_OBJS)
 AC_SUBST(RPC_CLIENT_OBJS)
 AC_SUBST(RPC_SERVER_H)
 AC_SUBST(SOFLAGS)
+AC_SUBST(SQL_FLAGS)
+AC_SUBST(SQL_LIBS)
 AC_SUBST(SWIGCFLAGS)
 AC_SUBST(TEST_LIBS)
 AC_SUBST(db_int_def)
 AC_SUBST(o)
+AC_SUBST(subdir_cmd)
 
 # The Windows public header has two extra symbols we need to remove.
 AC_SUBST(platform_header)
@@ -83,6 +98,10 @@ AC_SUBST(platform_footer)
 AC_PREFIX_DEFAULT(/usr/local/BerkeleyDB.__EDIT_DB_VERSION_MAJOR__.__EDIT_DB_VERSION_MINOR__)
 
 # Configure the version information.
+AC_SUBST(DB_VERSION_FAMILY)
+DB_VERSION_FAMILY="__EDIT_DB_VERSION_FAMILY__"
+AC_SUBST(DB_VERSION_RELEASE)
+DB_VERSION_RELEASE="__EDIT_DB_VERSION_RELEASE__"
 AC_SUBST(DB_VERSION_MAJOR)
 DB_VERSION_MAJOR="__EDIT_DB_VERSION_MAJOR__"
 AC_SUBST(DB_VERSION_MINOR)
@@ -91,6 +110,8 @@ AC_SUBST(DB_VERSION_PATCH)
 DB_VERSION_PATCH="__EDIT_DB_VERSION_PATCH__"
 AC_SUBST(DB_VERSION_STRING)
 DB_VERSION_STRING='"__EDIT_DB_VERSION_STRING__"'
+AC_SUBST(DB_VERSION_FULL_STRING)
+DB_VERSION_FULL_STRING='"__EDIT_DB_VERSION_FULL_STRING__"'
 AC_SUBST(DB_VERSION_UNIQUE_NAME)
 
 # Process all options before using them.
@@ -154,14 +175,16 @@ LIBSO_LIBS="$LIBS"
 # Don't override anything if it's already set from the environment.
 optimize_debug="-O"
 case "$host_os" in
-aix4.3.*|aix5*)
+aix4.3.*|aix[[56]]*)
 	case "$host_os" in
 	aix4.3.*)
 		CPPFLAGS="$CPPFLAGS -D_LINUX_SOURCE_COMPAT";;
 	esac
-	# Trying to optimize too aggressively on AIX leads to problems, the 
-	# compiler (xlc 8.0) seems to reorder code when it shouldn't.
-	optimize_debug="-O0"
+	# IBM's XLC compilers (at least versions 7/8/9) generate incorrect code
+	# when ordinary optimization is enabled because they make strong
+	# assumptions about the types held at each memory location, and some
+	# Berkeley DB code violates those assumptions.  [#16141]
+	optimize_debug="-O2 -qalias=noansi"
 	CC=${CC-"xlc_r"}
 	CPPFLAGS="$CPPFLAGS -D_THREAD_SAFE"
 	LDFLAGS="$LDFLAGS -Wl,-brtl";;
@@ -226,7 +249,9 @@ if test "$GCC" = "yes"; then
 else
 	case "$host_os" in
 	hpux11.0*)	;;
-	hpux11*)	CPPFLAGS="$CPPFLAGS -mt";;
+	hpux11*)	CPPFLAGS="$CPPFLAGS -mt"
+			test "$host_cpu" = "ia64" &&
+			    CFLAGS="$CFLAGS +u1";;
 	esac
 fi
 
@@ -287,14 +312,13 @@ if test "$db_cv_cxx" = "yes"; then
 	###### WORKAROUND: SEE SR #7938
 	AC_PROG_CXXCPP
 	###############################
-	AC_CXX_HAVE_STDHEADERS
+	AC_CXX_STDHEADERS
 	MAKEFILE_CXX="${CXX}"
 	MAKEFILE_CXXLINK="${CXX}"
 fi
 
 # Do some gcc specific configuration.
 AC_GCC_CONFIG1
-AC_GCC_CONFIG2
 
 # We need the -Kthread/-pthread flag when compiling on SCO/Caldera's UnixWare
 # and OpenUNIX releases.  We can't make the test until we know which compiler
@@ -318,12 +342,13 @@ CCC=CXX
 AC_PROG_LIBTOOL
 
 SOFLAGS="-rpath \$(libdir)"
-LIBTOOL_PROG="${SHELL} ./libtool"
 
 # Set SOSUFFIX and friends
 SOSUFFIX_CONFIG
 MODSUFFIX_CONFIG
 JMODSUFFIX_CONFIG
+
+LIBTOOL="./libtool"
 
 INSTALLER="\$(LIBTOOL) --mode=install cp -p"
 
@@ -334,31 +359,12 @@ MAKEFILE_CXX="\$(LIBTOOL) --mode=compile ${MAKEFILE_CXX}"
 MAKEFILE_XSOLINK="\$(LIBTOOL) --mode=link ${MAKEFILE_CXXLINK} -avoid-version"
 MAKEFILE_CXXLINK="\$(LIBTOOL) --mode=link ${MAKEFILE_CXXLINK}"
 
-LIBTOOL="\$(SHELL) ./libtool"
 
 case "$host_os" in
 cygwin* | mingw*)
 	MAKEFILE_SOLINK="$MAKEFILE_SOLINK -no-undefined"
 	MAKEFILE_XSOLINK="$MAKEFILE_XSOLINK -no-undefined";;
 esac
-
-# Configure for shared libraries, static libraries, or both.  If both are
-# configured, build the utilities and example programs with shared versions.
-#
-# $o is set to ".o" or ".lo", and is the file suffix used in the Makefile
-# instead of .o
-if test `$LIBTOOL_PROG --config |
-    grep build_libtool_libs | grep no` 2>/dev/null; then
-	enable_shared="no"
-else
-	enable_shared="yes"
-fi
-if test `$LIBTOOL_PROG --config |
-    grep build_old_libs | grep no` 2>/dev/null; then
-	enable_static="no"
-else
-	enable_static="yes"
-fi
 
 case "$host_os" in
     darwin*)
@@ -439,7 +445,7 @@ if test "$db_cv_java" = "yes"; then
 	# integers, we need to add the flag "-fno-strict-aliasing" to the gcc
 	# command line when compiling the JNI code.  This is documented in
 	# [#14953] and at http://www.swig.org/Doc1.3/Java.html
-	if test ${GCC} = "yes"; then
+	if test "${GCC}" = "yes"; then
 		SWIGCFLAGS="-fno-strict-aliasing"
 	fi
 
@@ -465,6 +471,123 @@ else
 	OSDIR=os
 	PATH_SEPARATOR="/"
 	AC_DEFINE(HAVE_SYSTEM_INCLUDE_FILES)
+fi
+
+# Optional SQL API.
+if test "$db_cv_sql" = "yes"; then
+	ADDITIONAL_INCS="$ADDITIONAL_INCS dbsql.h"
+	ADDITIONAL_PROGS="$ADDITIONAL_PROGS dbsql"
+
+	# Link against libdl, if found. It is only needed for the load
+	# extension, but shouldn't hurt.
+	AC_HAVE_LIBRARY(dl, SQL_LIBS="$SQL_LIBS -ldl")
+
+	# Link against libedit or readline for command-line editing.
+	if test x"$with_readline" != xno; then
+		header=readline.h
+		for rl_lib in edit readline; do
+			found="yes"
+			save_LIBS=""
+			LIBS=""
+			AS_UNSET(ac_cv_search_tgetent)
+			AC_SEARCH_LIBS(tgetent,
+			    [$rl_lib ncurses curses termcap],
+			    [term_LIBS="$LIBS"], [term_LIBS=""])
+			AC_CHECK_LIB([$rl_lib], [readline],
+			    [SQL_LIBS="$SQL_LIBS -l$rl_lib $term_LIBS"],
+			    [found="no"])
+			LIBS="$save_LIBS"
+			test "$found" = "yes" && break
+		done
+
+		if test x"$rl_lib" = xedit; then
+			header="editline/readline.h"
+		fi
+
+		if test "$found" = "yes"; then
+			AC_CHECK_HEADER($header, [found="yes"], [
+				found="no"
+				if test "$cross_compiling" != yes; then
+					for dir in /usr /usr/local /usr/local/readline /usr/contrib /mingw; do
+						for subdir in include include/readline; do
+							AC_CHECK_FILE($dir/$subdir/$header, found=yes)
+							if test "$found" = "yes"; then
+								SQL_FLAGS="$SQL_FLAGS -I$dir/$subdir"
+								break
+							fi
+						done
+						test "$found" = "yes" && break
+					done
+				fi])
+		fi
+	fi
+
+	if test "$enable_shared" = "no"; then
+		DEFAULT_LIB_SQL="\$(libsql_version)"
+	else
+		DEFAULT_LIB_SQL="\$(libsqlso_target)"
+	fi
+	INSTALL_LIBS="$INSTALL_LIBS $DEFAULT_LIB_SQL"
+	if test "$enable_static" = "yes"; then
+		INSTALL_LIBS="$INSTALL_LIBS \$(libsql)"
+	fi
+
+	if test "$db_cv_test" = "yes"; then
+		subdirs="$subdirs sql"
+		ADDITIONAL_LANG="$ADDITIONAL_LANG sql-test"
+	fi
+
+	if test "$db_cv_debug" = "yes"; then
+		SQL_FLAGS="$SQL_FLAGS -DSQLITE_DEBUG=1"
+	fi
+fi
+
+if test "$db_cv_sql_compat" = "yes"; then
+	if test "$enable_shared" = "no"; then
+		DEFAULT_LIB_SQLITE="\$(libsqlite)"
+	else
+		DEFAULT_LIB_SQLITE="\$(libsqliteso_target)"
+	fi
+
+	ADDITIONAL_INCS="$ADDITIONAL_INCS \$(srcdir)/sql/generated/sqlite3.h"
+	ADDITIONAL_PROGS="$ADDITIONAL_PROGS sqlite3"
+	INSTALL_LIBS="$INSTALL_LIBS $DEFAULT_LIB_SQLITE"
+
+	# This is different to the other libraries: we need to be very
+	# careful not to delete an existing installation of SQLite unless
+	# we are installing over it.
+	if test "$enable_shared" = "yes"; then
+		INSTALL_LIBS_EXTRA="$INSTALL_LIBS_EXTRA \$(libsqliteso)"
+	fi
+	if test "$enable_static" = "yes"; then
+		INSTALL_LIBS="$INSTALL_LIBS \$(libsqlite)"
+	fi
+fi
+
+# Optional SQL code generation tool.
+if test "$db_cv_sql_codegen" = "yes"; then
+	ADDITIONAL_PROGS="$ADDITIONAL_PROGS db_sql_codegen"
+fi
+
+# Optional STL API.
+if test "$db_cv_stl" = "yes"; then
+	AC_CXX_SUPPORTS_TEMPLATES
+	AC_CXX_WSTRING
+	AX_TLS
+	if test "$enable_shared" = "no"; then
+		DEFAULT_LIB_STL="\$(libstl_version)"
+	fi
+	if test "$enable_shared" = "yes"; then
+		DEFAULT_LIB_STL="\$(libstlso_target)"
+	fi
+	ADDITIONAL_INCS="$ADDITIONAL_INCS dbstl_common.h"
+	for f in dbstl_set.h dbstl_vector.h dbstl_exception.h dbstl_map.h dbstl_utility.h dbstl_dbc.h dbstl_dbt.h dbstl_base_iterator.h dbstl_container.h dbstl_element_ref.h dbstl_inner_utility.h dbstl_resource_manager.h ; do
+		ADDITIONAL_INCS="$ADDITIONAL_INCS \$(srcdir)/stl/$f"
+	done
+	INSTALL_LIBS="$INSTALL_LIBS $DEFAULT_LIB_STL"
+	if test "$enable_static" = "yes"; then
+		INSTALL_LIBS="$INSTALL_LIBS \$(libstl)"
+	fi
 fi
 
 # Checks for include files, structures, C types.
@@ -497,6 +620,14 @@ fi
 # We do this first because it changes $LIBSO_LIBS.
 AM_DEFINE_MUTEXES
 
+# Check for native (system call or instruction set) support for
+# atomic increment, decrement, and compare & exchange.
+AM_DEFINE_ATOMIC
+
+# Check for os-specific event support for performance monitoring such as
+# DTrace or SystemTap.
+AM_DEFINE_PERFMON
+
 # Test for various functions/libraries -- do tests that change library values
 # first.
 #
@@ -522,7 +653,6 @@ LIBSO_LIBS="$LIBS"
 # bother -- if they exist, we load them, it's only the test programs anyway.
 AC_HAVE_LIBRARY(m, TEST_LIBS="$TEST_LIBS -lm")
 AC_HAVE_LIBRARY(nsl, TEST_LIBS="$TEST_LIBS -lnsl")
-AC_HAVE_LIBRARY(pthread, TEST_LIBS="$TEST_LIBS -lpthread")
 AC_HAVE_LIBRARY(socket, TEST_LIBS="$TEST_LIBS -lsocket")
 
 # Checks for system functions for which we have replacements.
@@ -541,8 +671,8 @@ AC_CHECK_FUNCS(\
 	_fstati64 backtrace backtrace_symbols directio fchmod fclose\
 	fcntl fdatasync fgetc fgets fopen fwrite getgid\
 	getrusage getuid hstrerror mprotect pstat_getdynamic\
-	pthread_yield sched_yield select setgid setuid sigaction\
-	snprintf stat sysconf vsnprintf yield)
+	pthread_self pthread_yield random sched_yield select setgid setuid\
+	sigaction snprintf stat sysconf vsnprintf yield)
 
 AC_TIMERS
 
@@ -712,6 +842,18 @@ fi
 # duplicates require it.
 ADDITIONAL_OBJS="$ADDITIONAL_OBJS \$(BTREE_OBJS)"
 
+# Compression can be disabled.
+if test "$db_cv_build_compression" = "yes"; then
+	AC_DEFINE(HAVE_COMPRESSION)
+	AH_TEMPLATE(HAVE_COMPRESSION, [Define to 1 if building compression support.])
+fi
+
+# Partitioning can be disabled.
+if test "$db_cv_build_partition" = "yes"; then
+	AC_DEFINE(HAVE_PARTITION)
+	AH_TEMPLATE(HAVE_PARTITION, [Define to 1 if building partitioned database support.])
+fi
+
 # Hash can be disabled.
 if test "$db_cv_build_hash" = "yes"; then
 	AC_DEFINE(HAVE_HASH)
@@ -743,7 +885,28 @@ if test "$db_cv_build_replication" = "yes"; then
 	    [Define to 1 if building replication support.])
 	ADDITIONAL_OBJS="$ADDITIONAL_OBJS \$(REP_OBJS)"
 
-	if test "$db_cv_build_replication_mgr" = "yes"; then
+	# If we're building replication and detected POSIX threads, build the
+	# replication manager.
+	AH_TEMPLATE(HAVE_REPLICATION_THREADS,
+	    [Define to 1 if building the Berkeley DB replication framework.])
+
+	if test "$ac_cv_header_pthread_h" = yes; then
+		AC_DEFINE(HAVE_REPLICATION_THREADS)
+
+		if test "$with_stacksize" != "no"; then
+			AC_DEFINE_UNQUOTED(DB_STACKSIZE, $with_stacksize,
+	    [Defined to a size to limit the stack size of Berkeley DB threads.])
+		fi
+
+		# Solaris requires the socket and nsl libraries to build the
+		# replication manager.  Don't add nsl regardless of the OS,
+		# it causes RPC to fail on AIX 4.3.3.
+		case "$host_os" in
+		solaris*)
+			AC_HAVE_LIBRARY(nsl, LIBSO_LIBS="$LIBSO_LIBS -lnsl")
+			AC_HAVE_LIBRARY(socket,
+			    LIBSO_LIBS="$LIBSO_LIBS -lsocket");;
+		esac
 		ADDITIONAL_OBJS="$ADDITIONAL_OBJS \$(REPMGR_OBJS)"
 	else
 		ADDITIONAL_OBJS="$ADDITIONAL_OBJS repmgr_stub${o}"
@@ -764,18 +927,27 @@ if test "$db_cv_build_verify" = "yes"; then
 	AC_DEFINE(HAVE_VERIFY)
 	AH_TEMPLATE(HAVE_VERIFY,
 	    [Define to 1 if building access method verification support.])
-	ADDITIONAL_OBJS="$ADDITIONAL_OBJS \$(BTREE_VRFY_OBJS)"
+	ADDITIONAL_OBJS="$ADDITIONAL_OBJS \$(BTREE_VRFY_OBJS) \$(LOG_VRFY_OBJS)"
 else
-	ADDITIONAL_OBJS="$ADDITIONAL_OBJS db_vrfy_stub${o}"
+	ADDITIONAL_OBJS="$ADDITIONAL_OBJS db_vrfy_stub${o} log_verify_stub${o}"
 fi
 
 # The crypto code can be disabled.
-if test -d "$srcdir/../crypto" -a "$db_cv_build_cryptography" = "yes"; then
+if test -d "$srcdir/../crypto" -a "$db_cv_build_cryptography" != "no"; then
 	AC_DEFINE(HAVE_CRYPTO)
 	AH_TEMPLATE(HAVE_CRYPTO,
-    [Define to 1 if Berkeley DB release includes strong cryptography.])
+	    [Define to 1 if building cryptography support.])
 
 	CRYPTO_OBJS="\$(CRYPTO_OBJS)"
+
+	if test "$db_cv_build_cryptography" = "ipp"; then
+		AC_CHECK_HEADER([ippcp.h], [], AC_MSG_ERROR([\
+The 'ippcp.h' header file required for IPP cryptography support was not found \
+in the configured include path.]))
+		AC_DEFINE(HAVE_CRYPTO_IPP)
+		AH_TEMPLATE(HAVE_CRYPTO_IPP,
+		    [Define to 1 if using Intel IPP for cryptography.])
+	fi
 else
 	CRYPTO_OBJS="crypto_stub${o}"
 fi
@@ -797,6 +969,13 @@ fi
 # If building for QNX, we need additional OS files.
 if test "$qnx_build" = "yes"; then
 	ADDITIONAL_OBJS="$ADDITIONAL_OBJS os_qnx_fsync${o} os_qnx_open${o}"
+fi
+
+# The DBM API can be disabled.
+if test "$db_cv_dbm" = "yes"; then
+	AC_DEFINE(HAVE_DBM)
+	AH_TEMPLATE(HAVE_DBM, [Define to 1 if building the DBM API.])
+	ADDITIONAL_OBJS="$ADDITIONAL_OBJS dbm${o} hsearch${o}"
 fi
 
 # We need to add the additional object files into the Makefile with the correct
@@ -858,5 +1037,20 @@ if test "$db_cv_compat185" = "yes"; then
 	fi
 fi
 
+if test "$db_cv_stl" = "yes"; then
+	CREATE_LIST="$CREATE_LIST
+	dbstl_common.h:$srcdir/../stl/dbstl_common.in"
+fi
+
+if test "x$subdirs" != "x"; then
+	subdir_cmd="@for d in ${subdirs}; do (cd \$\$d && \${MAKE} \$@) ; done"
+fi
+
 AC_CONFIG_FILES($CREATE_LIST)
 AC_OUTPUT
+
+if test "$db_cv_sql" = "yes"; then
+	# This command runs the configure script from the SQL tree.
+	AC_MSG_NOTICE([Configuring the SQL API])
+	AC_SQL_CONFIG
+fi

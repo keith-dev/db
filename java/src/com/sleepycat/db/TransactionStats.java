@@ -4,7 +4,7 @@
  *
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 
 package com.sleepycat.db;
@@ -23,72 +23,57 @@ public class TransactionStats {
         /* package */ Active() {}
 
         private int txnid;
-        /**
-    The transaction ID of the transaction.
-    */
+        /** The transaction ID of the transaction. */
     public int getTxnId() {
             return txnid;
         }
 
         private int parentid;
-        /**
-    The transaction ID of the parent transaction (or 0, if no parent).
-    */
+        /** The transaction ID of the parent transaction (or 0, if no parent). */
     public int getParentId() {
             return parentid;
         }
 
         private int pid;
-        /** The process ID of the process that owns the transaction. **/
+        /** The process ID of the process that owns the transaction. */
     public int getPid() {
             return pid;
         }
 
         private LogSequenceNumber lsn;
-        /**
-    The log sequence number of the transaction's first log record.
-    */
+        /** The log sequence number of the transaction's first log record. */
     public LogSequenceNumber getLsn() {
             return lsn;
         }
 
         private LogSequenceNumber read_lsn;
-        /**
-    The log sequence number of reads for snapshot transactions.
-    */
+        /** The log sequence number of reads for snapshot transactions. */
     public LogSequenceNumber getReadLsn() {
             return read_lsn;
         }
 
         private int mvcc_ref;
-        /**
-    The number of buffer copies created by this transaction that remain in
-    cache.
-    */
+        /** The number of buffer copies created by this transaction that remain in cache. */
     public int getMultiversionRef() {
             return mvcc_ref;
         }
 
+        private int priority;
+        /** Assigned priority used when resolving deadlocks. */
+    public int getPriority() {
+            return priority;
+        }
+
         private int status;
-        /**
-    The status of the transaction.
-    */
+        /** The status of the transaction. */
     public int getStatus() {
             return status;
         }
 
-        private int xa_status;
-        /**
-    If the transaction is an XA transaction, the status of the
-    transaction, otherwise 0.
-    */
-    public int getXaStatus() {
-            return xa_status;
-        }
-
-        private byte[] xid;
-        public byte[] getXId() {
-            return xid;
+        private byte[] gid;
+        /** Return the transaction's Global ID, if the transaction was prepared using {@link Transaction#prepare}. Otherwise, return an undefined value.  */
+        public byte[] getGId() {
+            return gid;
         }
 
         private String name;
@@ -108,9 +93,9 @@ public class TransactionStats {
                 + "\n      lsn=" + lsn
                 + "\n      read_lsn=" + read_lsn
                 + "\n      mvcc_ref=" + mvcc_ref
+                + "\n      priority=" + priority
                 + "\n      status=" + status
-                + "\n      xa_status=" + xa_status
-                + "\n      xid=" + DbUtil.byteArrayToString(xid)
+                + "\n      gid=" + DbUtil.byteArrayToString(gid)
                 + "\n      name=" + name
                 ;
         }
@@ -158,27 +143,27 @@ public class TransactionStats {
         return st_maxtxns;
     }
 
-    private int st_naborts;
+    private long st_naborts;
     /**
     The number of transactions that have aborted.
     */
-    public int getNaborts() {
+    public long getNaborts() {
         return st_naborts;
     }
 
-    private int st_nbegins;
+    private long st_nbegins;
     /**
     The number of transactions that have begun.
     */
-    public int getNumBegins() {
+    public long getNumBegins() {
         return st_nbegins;
     }
 
-    private int st_ncommits;
+    private long st_ncommits;
     /**
     The number of transactions that have committed.
     */
-    public int getNumCommits() {
+    public long getNumCommits() {
         return st_ncommits;
     }
 
@@ -218,25 +203,28 @@ public class TransactionStats {
     }
 
     private Active[] st_txnarray;
+    /**
+    An array of {@code Active} objects, describing the currently active transactions.
+    */
     public Active[] getTxnarray() {
         return st_txnarray;
     }
 
-    private int st_region_wait;
+    private long st_region_wait;
     /**
     The number of times that a thread of control was forced to wait
     before obtaining the region lock.
     */
-    public int getRegionWait() {
+    public long getRegionWait() {
         return st_region_wait;
     }
 
-    private int st_region_nowait;
+    private long st_region_nowait;
     /**
     The number of times that a thread of control was able to obtain the
     region lock without waiting.
     */
-    public int getRegionNowait() {
+    public long getRegionNowait() {
         return st_region_nowait;
     }
 

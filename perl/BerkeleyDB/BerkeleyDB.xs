@@ -6,7 +6,7 @@
 
  All comments/suggestions/problems are welcome
 
-     Copyright (c) 1997-2008 Paul Marquess. All rights reserved.
+     Copyright (c) 1997-2010 Paul Marquess. All rights reserved.
      This program is free software; you can redistribute it and/or
      modify it under the same terms as Perl itself.
 
@@ -51,6 +51,10 @@ extern "C" {
 #  ifdef open
 #    undef open
 #  endif
+#endif
+
+#ifndef SvUTF8_off
+# define SvUTF8_off(x)
 #endif
 
 /* Being the Berkeley DB we prefer the <sys/cdefs.h> (which will be
@@ -133,6 +137,18 @@ extern "C" {
 #  define AT_LEAST_DB_4_5
 #endif
 
+#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 6)
+#  define AT_LEAST_DB_4_6
+#endif
+
+#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 7)
+#  define AT_LEAST_DB_4_7
+#endif
+
+#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 8)
+#  define AT_LEAST_DB_4_8
+#endif
+
 #ifdef __cplusplus
 }
 #endif
@@ -208,6 +224,9 @@ typedef struct {
 	/* char		ErrBuff[1000] ; */
 	SV *		ErrPrefix ;
 	SV *		ErrHandle ;
+#ifdef AT_LEAST_DB_4_3
+	SV *		MsgHandle ;
+#endif
 	DB_ENV *	Env ;
 	int		open_dbs ;
 	int		TxnMgrStatus ;
@@ -236,12 +255,20 @@ typedef struct {
         SV *   	 	associated ;
         bool		secondary_db ;
 #endif
+#ifdef AT_LEAST_DB_4_8
+        SV *   	 	associated_foreign ;
+        SV *   	 	bt_compress ;
+        SV *   	 	bt_uncompress ;
+#endif
         bool		primary_recno_or_queue ;
 	int		Status ;
         DB_INFO *	info ;
         DBC *   	cursor ;
 	DB_TXN *	txn ;
 	int		open_cursors ;
+#ifdef AT_LEAST_DB_4_3
+	int		open_sequences ;
+#endif
 	u_int32_t	partial ;
 	u_int32_t	dlen ;
 	u_int32_t	doff ;
@@ -272,6 +299,9 @@ typedef struct {
 #ifdef AT_LEAST_DB_3_3
         SV *   	 	associated ;
 	bool		secondary_db ;
+#endif
+#ifdef AT_LEAST_DB_4_8
+        SV *   	 	associated_foreign ;
 #endif
 	bool		primary_recno_or_queue ;
 	int		Status ;
@@ -310,6 +340,18 @@ typedef struct {
 typedef DB_TXN                BerkeleyDB_Txn_type ;
 #endif
 
+#ifdef AT_LEAST_DB_4_3
+typedef struct {
+    int active;
+    BerkeleyDB_type *db;
+    DB_SEQUENCE     *seq;
+} BerkeleyDB_Sequence_type;
+#else
+typedef int BerkeleyDB_Sequence_type;
+typedef SV* db_seq_t;
+#endif
+
+
 typedef BerkeleyDB_ENV_type *	BerkeleyDB__Env ;
 typedef BerkeleyDB_ENV_type *	BerkeleyDB__Env__Raw ;
 typedef BerkeleyDB_ENV_type *	BerkeleyDB__Env__Inner ;
@@ -335,6 +377,11 @@ typedef BerkeleyDB_TxnMgr_type * BerkeleyDB__TxnMgr__Inner ;
 typedef BerkeleyDB_Txn_type *	BerkeleyDB__Txn ;
 typedef BerkeleyDB_Txn_type *	BerkeleyDB__Txn__Raw ;
 typedef BerkeleyDB_Txn_type *	BerkeleyDB__Txn__Inner ;
+#ifdef AT_LEAST_DB_4_3
+typedef BerkeleyDB_Sequence_type * 	BerkeleyDB__Sequence ;
+#else
+typedef int * 	BerkeleyDB__Sequence ;
+#endif
 #if 0
 typedef DB_LOG *      		BerkeleyDB__Log ;
 typedef DB_LOCKTAB *  		BerkeleyDB__Lock ;
@@ -345,6 +392,7 @@ typedef DBT 			DBT_B ;
 typedef DBT 			DBTKEY_B ;
 typedef DBT 			DBTKEY_Br ;
 typedef DBT 			DBTKEY_Bpr ;
+typedef DBT 			DBTKEY_seq ;
 typedef DBT 			DBTVALUE ;
 typedef void *	      		PV_or_NULL ;
 typedef PerlIO *      		IO_or_NULL ;
@@ -401,7 +449,10 @@ typedef	int db_timeout_t ;
 #define getInnerObject(x) ((SV*)SvRV(sv))
 #endif
 
-#define my_sv_setpvn(sv, d, s) (s ? sv_setpvn(sv, d, s) : sv_setpv(sv, "") )
+#define my_sv_setpvn(sv, d, s) do { \
+                        s ? sv_setpvn(sv, d, s) : sv_setpv(sv, ""); \
+                        SvUTF8_off(sv); \
+                    } while(0)
 
 #define GetValue_iv(h,k) (((sv = readHash(h, k)) && sv != &PL_sv_undef) \
 				? SvIV(sv) : 0)
@@ -471,6 +522,41 @@ typedef	int db_timeout_t ;
           }                                                     \
         }
 
+#ifdef AT_LEAST_DB_4_3
+
+#define InputKey_seq(arg, var)  \
+	{   \
+	    SV* my_sv = arg ;   \
+	    /* DBM_ckFilter(my_sv, filter_store_key, "filter_store_key"); */ \
+	    DBT_clear(var) ;    \
+        SvGETMAGIC(arg) ;   \
+	    if (seq->db->recno_or_queue) {  \
+	        Value = GetRecnoKey(seq->db, SvIV(my_sv)) ;     \
+	        var.data = & Value;     \
+	        var.size = (int)sizeof(db_recno_t); \
+	    }   \
+	    else {  \
+            STRLEN len; \
+	        var.data = SvPV(my_sv, len);    \
+	        var.size = (int)len;    \
+	    }   \
+	}
+
+#define OutputKey_seq(arg, name)                                    \
+        { if (RETVAL == 0) 					\
+          {                                                     \
+                if (!seq->db->recno_or_queue) {                     	\
+                    my_sv_setpvn(arg, name.data, name.size);    \
+                }                                               \
+                else                                            \
+                    sv_setiv(arg, (I32)*(I32*)name.data - RECNO_BASE);   \
+          }                                                     \
+        }
+#else
+#define InputKey_seq(arg, var)
+#define OutputKey_seq(arg, name) 
+#endif
+
 #define OutputKey_B(arg, name)                                  \
         { if (RETVAL == 0) 					\
           {                                                     \
@@ -532,6 +618,11 @@ typedef	int db_timeout_t ;
 #define ckActive_Transaction(a) ckActive(a, "Transaction")
 #define ckActive_Database(a) 	ckActive(a, "Database")
 #define ckActive_Cursor(a) 	ckActive(a, "Cursor")
+#ifdef AT_LEAST_DB_4_3
+#define ckActive_Sequence(a) 	ckActive(a, "Sequence")
+#else
+#define ckActive_Sequence(a) 	
+#endif
 
 #define dieIfEnvOpened(e, m) if (e->opened) softCrash("Cannot call method BerkeleyDB::Env::%s after environment has been opened", m);	
 
@@ -787,6 +878,10 @@ destroyDB(BerkeleyDB db)
 #ifdef AT_LEAST_DB_3_3
     if (db->associated && !db->secondary_db)
        	  SvREFCNT_dec(db->associated) ;
+#endif
+#ifdef AT_LEAST_DB_4_8
+    if (db->associated_foreign)
+       	  SvREFCNT_dec(db->associated_foreign) ;
 #endif
     if (db->prefix)
        	  SvREFCNT_dec(db->prefix) ;
@@ -1171,9 +1266,12 @@ associate_cb(DB_callback const DBT * pkey, const DBT * pdata, DBT * skey)
     /* char *sk_dat ; */
     int retval ;
     int count ;
+    int i ;
     SV * skey_SV ;
     STRLEN skey_len;
     char * skey_ptr ;
+    AV * skey_AV;
+    DBT * tkey;
 
     Trace(("In associate_cb \n")) ;
     if (getCurrentDB->associated == NULL){
@@ -1202,7 +1300,7 @@ associate_cb(DB_callback const DBT * pkey, const DBT * pdata, DBT * skey)
     SAVETMPS;
 
     PUSHMARK(SP) ;
-    EXTEND(SP,2) ;
+    EXTEND(SP,3) ;
     PUSHs(sv_2mortal(newSVpvn(pk_dat,pkey->size)));
     PUSHs(sv_2mortal(newSVpvn(pd_dat,pdata->size)));
     PUSHs(sv_2mortal(skey_SV));
@@ -1221,16 +1319,66 @@ associate_cb(DB_callback const DBT * pkey, const DBT * pdata, DBT * skey)
 
     PUTBACK ;
     
-    /* retrieve the secondary key */
-    DBT_clear(*skey);
+    if (retval != DB_DONOTINDEX)
+    {
+        /* retrieve the secondary key */
+        DBT_clear(*skey);
 
-    skey_ptr = SvPV(skey_SV, skey_len);
-    skey->flags = DB_DBT_APPMALLOC;
-    /* skey->size = SvCUR(skey_SV); */
-    /* skey->data = (char*)safemalloc(skey->size); */
-    skey->size = skey_len;
-    skey->data = (char*)safemalloc(skey_len);
-    memcpy(skey->data, skey_ptr, skey_len);
+        skey->flags = DB_DBT_APPMALLOC;
+
+    #ifdef AT_LEAST_DB_4_6
+        if ( SvROK(skey_SV) ) {
+            SV *rv = SvRV(skey_SV);
+
+            if ( SvTYPE(rv) == SVt_PVAV ) {
+                AV *av = (AV *)rv;
+                SV **svs = AvARRAY(av);
+                I32 len = av_len(av) + 1;
+                I32 i;
+                DBT *dbts;
+
+                if ( len == 0 ) {
+                    retval = DB_DONOTINDEX;
+                } else if ( len == 1 ) {
+                    skey_ptr = SvPV(svs[0], skey_len);
+                    skey->size = skey_len;
+                    skey->data = (char*)safemalloc(skey_len);
+                    memcpy(skey->data, skey_ptr, skey_len);
+                    Trace(("key is %d -- %.*s\n", skey->size, skey->size, skey->data));
+                } else {
+                    skey->flags |= DB_DBT_MULTIPLE ;
+
+                    /* FIXME this will leak if safemalloc fails later... do we care? */
+                    dbts = (DBT *) safemalloc(sizeof(DBT) * len);
+                    skey->size = len;
+                    skey->data = (char *)dbts;
+
+                    for ( i = 0; i < skey->size; i ++ ) {
+                        skey_ptr = SvPV(svs[i], skey_len);
+
+                        dbts[i].flags = DB_DBT_APPMALLOC;
+                        dbts[i].size = skey_len;
+                        dbts[i].data = (char *)safemalloc(skey_len);
+                        memcpy(dbts[i].data, skey_ptr, skey_len);
+
+                        Trace(("key is %d -- %.*s\n", dbts[i].size, dbts[i].size, dbts[i].data));
+                    }
+                    Trace(("mkey has %d subkeys\n", skey->size));
+                }
+            } else {
+                croak("Not an array reference");
+            }
+        } else 
+    #endif
+        {
+            skey_ptr = SvPV(skey_SV, skey_len);
+            /* skey->size = SvCUR(skey_SV); */
+            /* skey->data = (char*)safemalloc(skey->size); */
+            skey->size = skey_len;
+            skey->data = (char*)safemalloc(skey_len);
+            memcpy(skey->data, skey_ptr, skey_len);
+        }
+    }
     Trace(("key is %d -- %.*s\n", skey->size, skey->size, skey->data));
 
     FREETMPS ;
@@ -1305,11 +1453,208 @@ associate_cb_recno(DB_callback const DBT * pkey, const DBT * pdata, DBT * skey)
     /* retrieve the secondary key */
     DBT_clear(*skey);
 
-    Value = GetRecnoKey(getCurrentDB, SvIV(skey_SV)) ; 
-    skey->flags = DB_DBT_APPMALLOC;
-    skey->size = (int)sizeof(db_recno_t);
-    skey->data = (char*)safemalloc(skey->size);
-    memcpy(skey->data, &Value, skey->size);
+    if (retval != DB_DONOTINDEX)
+    {
+        Value = GetRecnoKey(getCurrentDB, SvIV(skey_SV)) ; 
+        skey->flags = DB_DBT_APPMALLOC;
+        skey->size = (int)sizeof(db_recno_t);
+        skey->data = (char*)safemalloc(skey->size);
+        memcpy(skey->data, &Value, skey->size);
+    }
+
+    FREETMPS ;
+    LEAVE ;
+
+    return (retval) ;
+}
+
+#endif /* AT_LEAST_DB_3_3 */
+
+#ifdef AT_LEAST_DB_4_8
+
+typedef int (*bt_compress_fcn_type)(DB *db, const DBT *prevKey, 
+        const DBT *prevData, const DBT *key, const DBT *data, DBT *dest);
+
+typedef int (*bt_decompress_fcn_type)(DB *db, const DBT *prevKey, 
+        const DBT *prevData, DBT *compressed, DBT *destKey, DBT *destData);
+
+#endif /* AT_LEAST_DB_4_8 */
+
+typedef int (*foreign_cb_type)(DB *, const DBT *, DBT *, const DBT *, int *) ;
+
+#ifdef AT_LEAST_DB_4_8
+
+static int
+associate_foreign_cb(DB* db, const DBT * key, DBT * data, DBT * foreignkey, int* changed)
+{
+#ifdef dTHX
+    dTHX;
+#endif    
+    dSP ;
+    dMY_CXT ;    
+    char * k_dat, * d_dat, * f_dat;
+    int retval ;
+    int count ;
+    int i ;
+    SV * changed_SV ;
+    STRLEN skey_len;
+    char * skey_ptr ;
+    AV * skey_AV;
+    DBT * tkey;
+
+    Trace(("In associate_foreign_cb \n")) ;
+    if (getCurrentDB->associated_foreign == NULL){
+        Trace(("No Callback registered\n")) ;
+        return EINVAL ;
+    }
+
+    changed_SV = newSViv(*changed);
+
+
+    k_dat = (char*) key->data ;
+    d_dat = (char*) data->data ;
+    f_dat = (char*) foreignkey->data ;
+
+#ifndef newSVpvn
+    /* As newSVpv will assume that the data pointer is a null terminated C
+       string if the size parameter is 0, make sure that data points to an
+       empty string if the length is 0
+    */
+    if (key->size == 0)
+        k_dat = "" ;
+    if (data->size == 0)
+        d_dat = "" ;
+    if (foreignkey->size == 0)
+        f_dat = "" ;
+#endif
+
+    ENTER ;
+    SAVETMPS;
+
+    PUSHMARK(SP) ;
+    EXTEND(SP,4) ;
+
+    PUSHs(sv_2mortal(newSVpvn(k_dat,key->size)));
+    SV* data_sv = newSVpv(d_dat, data->size);
+    PUSHs(sv_2mortal(data_sv));
+    PUSHs(sv_2mortal(newSVpvn(f_dat,foreignkey->size)));
+    PUSHs(sv_2mortal(changed_SV));
+    PUTBACK ;
+
+    Trace(("calling associated cb\n"));
+    count = perl_call_sv(getCurrentDB->associated_foreign, G_SCALAR);
+    Trace(("called associated cb\n"));
+
+    SPAGAIN ;
+
+    if (count != 1)
+        softCrash ("associate_foreign: expected 1 return value from prefix sub, got %d", count) ;
+
+    retval = POPi ;
+
+    PUTBACK ;
+
+    *changed = SvIV(changed_SV);
+
+    if (*changed)
+    {
+        DBT_clear(*data);
+        data->flags = DB_DBT_APPMALLOC;
+        skey_ptr = SvPV(data_sv, skey_len);
+        data->size = skey_len;
+        data->data = (char*)safemalloc(skey_len);
+        memcpy(data->data, skey_ptr, skey_len);
+    }
+    Trace(("key is %d -- %.*s\n", skey->size, skey->size, skey->data));
+
+    FREETMPS ;
+    LEAVE ;
+
+    return (retval) ;
+}
+
+static int
+associate_foreign_cb_recno(DB* db, const DBT * key, DBT * data, DBT * foreignkey, int* changed)
+{
+#ifdef dTHX
+    dTHX;
+#endif    
+    dSP ;
+    dMY_CXT ;    
+    char * k_dat, * d_dat, * f_dat;
+    int retval ;
+    int count ;
+    int i ;
+    SV * changed_SV ;
+    STRLEN skey_len;
+    char * skey_ptr ;
+    AV * skey_AV;
+    DBT * tkey;
+
+    Trace(("In associate_foreign_cb \n")) ;
+    if (getCurrentDB->associated_foreign == NULL){
+        Trace(("No Callback registered\n")) ;
+        return EINVAL ;
+    }
+
+    changed_SV = newSViv(*changed);
+
+
+    k_dat = (char*) key->data ;
+    d_dat = (char*) data->data ;
+    f_dat = (char*) foreignkey->data ;
+
+#ifndef newSVpvn
+    /* As newSVpv will assume that the data pointer is a null terminated C
+       string if the size parameter is 0, make sure that data points to an
+       empty string if the length is 0
+    */
+    if (key->size == 0)
+        k_dat = "" ;
+    if (data->size == 0)
+        d_dat = "" ;
+    if (foreignkey->size == 0)
+        f_dat = "" ;
+#endif
+
+    ENTER ;
+    SAVETMPS;
+
+    PUSHMARK(SP) ;
+    EXTEND(SP,4) ;
+
+    PUSHs(sv_2mortal(newSVpvn(k_dat,key->size)));
+    SV* data_sv = newSVpv(d_dat, data->size);
+    PUSHs(sv_2mortal(data_sv));
+    PUSHs(sv_2mortal(newSVpvn(f_dat,foreignkey->size)));
+    PUSHs(sv_2mortal(changed_SV));
+    PUTBACK ;
+
+    Trace(("calling associated cb\n"));
+    count = perl_call_sv(getCurrentDB->associated_foreign, G_SCALAR);
+    Trace(("called associated cb\n"));
+
+    SPAGAIN ;
+
+    if (count != 1)
+        softCrash ("associate_foreign: expected 1 return value from prefix sub, got %d", count) ;
+
+    retval = POPi ;
+
+    PUTBACK ;
+
+    *changed = SvIV(changed_SV);
+
+    if (*changed)
+    {
+        DBT_clear(*data);
+        Value = GetRecnoKey(getCurrentDB, SvIV(data_sv)) ; 
+        data->flags = DB_DBT_APPMALLOC;
+        data->size = (int)sizeof(db_recno_t);
+        data->data = (char*)safemalloc(data->size);
+        memcpy(data->data, &Value, data->size);
+    }
+    Trace(("key is %d -- %.*s\n", skey->size, skey->size, skey->data));
 
     FREETMPS ;
     LEAVE ;
@@ -1372,8 +1717,14 @@ readHash(HV * hash, char * key)
 {
     SV **       svp;
     svp = hv_fetch(hash, key, strlen(key), FALSE);
-    if (svp && SvOK(*svp))
-        return *svp ;
+
+    if (svp) {
+        if (SvGMAGICAL(*svp))
+            mg_get(*svp);
+        if (SvOK(*svp))
+            return *svp;
+    }
+
     return NULL ;
 }
 
@@ -1435,7 +1786,8 @@ my_db_open(
 		int		mode,
 		DB_INFO * 	info,
 		char *		password,
-		int		enc_flags
+		int		enc_flags,
+        HV*     hash
 	)
 {
     DB_ENV *	env    = NULL ;
@@ -1489,6 +1841,41 @@ my_db_open(
 	dbp->set_errcall(dbp, db_errcall_cb) ;
     }
 #endif
+
+    {
+        /* Btree Compression */
+        SV* sv;
+        SV* wanted = NULL;
+
+	    SetValue_sv(wanted, "set_bt_compress") ;
+
+        if (wanted)
+        {
+#ifndef AT_LEAST_DB_4_8
+            softCrash("set_bt_compress needs Berkeley DB 4.8 or better") ;
+#else
+            bt_compress_fcn_type c = NULL;
+            bt_decompress_fcn_type u = NULL;
+            /*
+            SV* compress = NULL;
+            SV* uncompress = NULL;
+
+            SetValue_sv(compress, "_btcompress1") ;
+            SetValue_sv(uncompress, "_btcompress2") ;
+            if (compress)
+            {
+                c = ;
+                db->bt_compress = newSVsv(compress) ;
+            }
+            */
+
+            Status = dbp->set_bt_compress(dbp, c, u);
+
+            if (Status)
+                return RETVAL ;
+#endif /* AT_LEAST_DB_4_8 */
+        }
+    }
 
 #ifdef AT_LEAST_DB_4_1
     /* set encryption */
@@ -1965,7 +2352,16 @@ _db_appinit(self, ref, errfile=NULL)
 	    int		setflags = 0 ;
 	    int		cachesize = 0 ;
 	    int		lk_detect = 0 ;
+            int		tx_max = 0 ;
+            int		log_config = 0 ;
+            int		max_lockers = 0 ;
+            int		max_locks = 0 ;
+            int		max_objects = 0 ;
 	    long	shm_key = 0 ;
+	    char*	data_dir = 0;
+	    char*	log_dir = 0;
+	    char*	temp_dir = 0;
+	    SV *	msgfile = NULL ;
         int     thread_count = 0 ;
 	    SV *	errprefix = NULL;
 	    DB_ENV *	env ;
@@ -1983,8 +2379,17 @@ _db_appinit(self, ref, errfile=NULL)
 	    SetValue_pv(server,    "Server", char *) ;
 	    SetValue_iv(cachesize, "Cachesize") ;
 	    SetValue_iv(lk_detect, "LockDetect") ;
+	    SetValue_iv(tx_max,    "TxMax") ;
+	    SetValue_iv(log_config,"LogConfig") ;
+	    SetValue_iv(max_lockers,"MaxLockers") ;
+	    SetValue_iv(max_locks, "MaxLocks") ;
+	    SetValue_iv(max_objects,"MaxObjects") ;
 	    SetValue_iv(shm_key,   "SharedMemKey") ;
 		SetValue_iv(thread_count,   "ThreadCount") ;
+	    SetValue_pv(data_dir,   "DB_DATA_DIR", char*) ;
+	    SetValue_pv(temp_dir,   "DB_TEMP_DIR", char*) ;
+	    SetValue_pv(log_dir,    "DB_LOG_DIR", char*) ;
+	    SetValue_sv(msgfile,    "MsgFile") ;
 #ifndef AT_LEAST_DB_3_2
 	    if (setflags)
 	        softCrash("-SetFlags needs Berkeley DB 3.x or better") ;
@@ -1995,18 +2400,34 @@ _db_appinit(self, ref, errfile=NULL)
 	    if (server)
 	        softCrash("-Server needs Berkeley DB 3.1 or better") ;
 #endif /* ! AT_LEAST_DB_3_1 */
+#ifndef AT_LEAST_DB_3_2
+	    if (max_lockers)
+	        softCrash("-MaxLockers needs Berkeley DB 3.2 or better") ;
+	    if (max_locks)
+	        softCrash("-MaxLocks needs Berkeley DB 3.2 or better") ;
+	    if (max_objects)
+	        softCrash("-MaxObjects needs Berkeley DB 3.2 or better") ;
+#endif /* ! AT_LEAST_DB_3_2 */
 #ifndef AT_LEAST_DB_4_1
 	    if (enc_passwd)
 	        softCrash("-Encrypt needs Berkeley DB 4.x or better") ;
 #endif /* ! AT_LEAST_DB_4_1 */
+#ifndef AT_LEAST_DB_4_3
+	    if (msgfile)
+	        softCrash("-MsgFile needs Berkeley DB 4.3.x or better") ;
+#endif /* ! AT_LEAST_DB_4_3 */
 #ifdef _WIN32
 		if (thread_count)
 			softCrash("-ThreadCount not supported on Windows") ;
-#endif /* ! AT_LEAST_DB_4_4 */
+#endif /* ! _WIN32 */
 #ifndef AT_LEAST_DB_4_4
 		if (thread_count)
 			softCrash("-ThreadCount needs Berkeley DB 4.4 or better") ;
 #endif /* ! AT_LEAST_DB_4_4 */
+#ifndef AT_LEAST_DB_4_7
+		if (log_config)
+			softCrash("-LogConfig needs Berkeley DB 4.7 or better") ;
+#endif /* ! AT_LEAST_DB_4_7 */
 	    Trace(("_db_appinit(config=[%d], home=[%s],errprefix=[%s],flags=[%d]\n",
 			config, home, errprefix, flags)) ;
 #ifdef TRACE
@@ -2087,6 +2508,24 @@ _db_appinit(self, ref, errfile=NULL)
 	      Trace(("set_shm_key [%d] returned %s\n", shm_key,
 			my_db_strerror(status)));
 	  }
+
+	  if (status == 0 && data_dir) {
+	      status = env->set_data_dir(env, data_dir) ;
+	      Trace(("set_data_dir [%s] returned %s\n", data_dir,
+			my_db_strerror(status)));
+	  }
+
+	  if (status == 0 && temp_dir) {
+	      status = env->set_tmp_dir(env, temp_dir) ;
+	      Trace(("set_tmp_dir [%s] returned %s\n", temp_dir,
+			my_db_strerror(status)));
+	  }
+
+	  if (status == 0 && log_dir) {
+	      status = env->set_lg_dir(env, log_dir) ;
+	      Trace(("set_lg_dir [%s] returned %s\n", log_dir,
+			my_db_strerror(status)));
+	  }
 #endif	  
 	  if (status == 0 && cachesize) {
 	      status = env->set_cachesize(env, 0, cachesize, 0) ;
@@ -2099,6 +2538,38 @@ _db_appinit(self, ref, errfile=NULL)
 	      Trace(("set_lk_detect [%d] returned %s\n",
 	              lk_detect, my_db_strerror(status)));
 	  }
+
+	  if (status == 0 && tx_max) {
+	      status = env->set_tx_max(env, tx_max) ;
+	      Trace(("set_tx_max [%d] returned %s\n",
+	              tx_max, my_db_strerror(status)));
+	  }
+#ifdef AT_LEAST_DB_4_7
+	  if (status == 0 && log_config) {
+	      status = env->log_set_config(env, log_config, 1) ;
+	      Trace(("log_set_config [%d] returned %s\n",
+	              log_config, my_db_strerror(status)));
+	  }
+#endif /* AT_LEAST_DB_4_7 */
+#ifdef AT_LEAST_DB_3_2
+	  if (status == 0 && max_lockers) {
+	      status = env->set_lk_max_lockers(env, max_lockers) ;
+	      Trace(("set_lk_max_lockers [%d] returned %s\n",
+	              max_lockers, my_db_strerror(status)));
+	  }
+
+	  if (status == 0 && max_locks) {
+	      status = env->set_lk_max_locks(env, max_locks) ;
+	      Trace(("set_lk_max_locks [%d] returned %s\n",
+	              max_locks, my_db_strerror(status)));
+	  }
+
+	  if (status == 0 && max_objects) {
+	      status = env->set_lk_max_objects(env, max_objects) ;
+	      Trace(("set_lk_max_objects [%d] returned %s\n",
+	              max_objects, my_db_strerror(status)));
+	  }
+#endif /* AT_LEAST_DB_3_2 */
 #ifdef AT_LEAST_DB_4_1
 	  /* set encryption */
 	  if (enc_passwd && status == 0)
@@ -2167,7 +2638,19 @@ _db_appinit(self, ref, errfile=NULL)
 	    	env->set_errfile(env, ef) ;
 
 	    }
-
+#ifdef AT_LEAST_DB_4_3
+	    if (msgfile) {
+	        if (SvGMAGICAL(msgfile))
+		    mg_get(msgfile);
+	        if (SvOK(msgfile)) {
+	            FILE * ef = GetFILEptr(msgfile);
+	    	    if (! ef)
+		        croak("Cannot open file MsgFile", Strerror(errno));
+		    RETVAL->MsgHandle = newSVsv(msgfile) ;
+	    	    env->set_msgfile(env, ef) ;
+	        }
+	    }
+#endif
 	    SetValue_iv(mode, "Mode") ;
 	    env->set_errcall(env, db_errcall_cb) ;
 	    RETVAL->active = TRUE ;
@@ -2185,6 +2668,10 @@ _db_appinit(self, ref, errfile=NULL)
 	      hash_store_iv("BerkeleyDB::Term::Env", (char *)RETVAL, 1) ;
 	  else {
 	      (env->close)(env, 0) ;
+#ifdef AT_LEAST_DB_4_3
+              if (RETVAL->MsgHandle)
+                  SvREFCNT_dec(RETVAL->MsgHandle) ;
+#endif
               if (RETVAL->ErrHandle)
                   SvREFCNT_dec(RETVAL->ErrHandle) ;
               if (RETVAL->ErrPrefix)
@@ -2252,6 +2739,44 @@ log_archive(env, flags=0)
 	  }
 #endif
 	}
+
+DualType
+log_set_config(env, flags=0, onoff=0)
+	BerkeleyDB::Env		env
+	u_int32_t		flags
+	int			onoff
+	PREINIT:
+	  dMY_CXT;
+	CODE:
+	{
+#ifndef AT_LEAST_DB_4_7
+          softCrash("log_set_config needs at least Berkeley DB 4.7.x");
+#else
+	  RETVAL = env->Status = env->Env->log_set_config(env->Env, flags, onoff) ;
+#endif
+	}
+	OUTPUT:
+	  RETVAL
+
+DualType
+log_get_config(env, flags, onoff)
+	BerkeleyDB::Env		env
+	u_int32_t		flags
+	int			    onoff=NO_INIT
+	PREINIT:
+	  dMY_CXT;
+	CODE:
+	{
+#ifndef AT_LEAST_DB_4_7
+      softCrash("log_get_config needs at least Berkeley DB 4.7.x");
+#else
+	  RETVAL = env->Status = env->Env->log_get_config(env->Env, flags, &onoff) ;
+#endif
+	}
+	OUTPUT:
+	  RETVAL
+      onoff
+
 
 BerkeleyDB::Txn::Raw
 _txn_begin(env, pid=NULL, flags=0)
@@ -2473,6 +2998,10 @@ _DESTROY(env)
 #endif
           if (env->ErrHandle)
               SvREFCNT_dec(env->ErrHandle) ;
+#ifdef AT_LEAST_DB_4_3
+          if (env->MsgHandle)
+              SvREFCNT_dec(env->MsgHandle) ;
+#endif
           if (env->ErrPrefix)
               SvREFCNT_dec(env->ErrPrefix) ;
 #if DB_VERSION_MAJOR == 2
@@ -2720,6 +3249,21 @@ get_timeout(env, timeout, flags=0)
 	    timeout
 
 int
+stat_print(env, flags=0)
+	BerkeleyDB::Env  env
+	u_int32_t    flags
+	INIT:
+	  ckActive_Database(env->active) ;
+	CODE:
+#ifndef AT_LEAST_DB_4_3
+		softCrash("$env->stat_print needs Berkeley DB 4.3 or better") ;
+#else
+		RETVAL = env->Status = env->Env->stat_print(env->Env, flags);
+#endif
+	OUTPUT:
+		RETVAL
+
+int
 lock_stat_print(env, flags=0)
 	BerkeleyDB::Env  env
 	u_int32_t    flags
@@ -2745,6 +3289,22 @@ mutex_stat_print(env, flags=0)
 		softCrash("$env->mutex_stat_print needs Berkeley DB 4.4 or better") ;
 #else
 		RETVAL = env->Status = env->Env->mutex_stat_print(env->Env, flags);
+#endif
+	OUTPUT:
+		RETVAL
+
+
+int
+txn_stat_print(env, flags=0)
+	BerkeleyDB::Env  env
+	u_int32_t    flags
+	INIT:
+	  ckActive_Database(env->active) ;
+	CODE:
+#ifndef AT_LEAST_DB_4_3
+		softCrash("$env->mutex_stat_print needs Berkeley DB 4.3 or better") ;
+#else
+		RETVAL = env->Status = env->Env->txn_stat_print(env->Env, flags);
 #endif
 	OUTPUT:
 		RETVAL
@@ -2863,7 +3423,8 @@ _db_open_hash(self, ref)
 	        croak("DupCompare needs Berkeley DB 2.5.9 or later") ;
 #endif
 	    }
-	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname, DB_HASH, flags, mode, &info, enc_passwd, enc_flags) ;
+	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname,
+                    DB_HASH, flags, mode, &info, enc_passwd, enc_flags, hash) ;
     	    Trace(("_db_open_hash end\n")) ;
 	}
 	OUTPUT:
@@ -2894,7 +3455,9 @@ db_stat(db, flags=0)
 	    db->Status = ((db->dbp)->stat)(db->dbp, &stat, safemalloc, flags) ;
 #endif
 #endif
-	    if (db->Status == 0) {
+	    if (db->Status) {
+	        XSRETURN_UNDEF;
+	    } else {
 	    	RETVAL = (HV*)sv_2mortal((SV*)newHV()) ;
 		hv_store_iv(RETVAL, "hash_magic", stat->hash_magic) ;
 		hv_store_iv(RETVAL, "hash_version", stat->hash_version);
@@ -2974,7 +3537,8 @@ _db_open_unknown(ref)
 	    SetValue_iv(info.flags, "Property") ;
 	    ZMALLOC(db, BerkeleyDB_type) ;
 
-	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname, DB_UNKNOWN, flags, mode, &info, enc_passwd, enc_flags) ;
+	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname,
+                    DB_UNKNOWN, flags, mode, &info, enc_passwd, enc_flags, hash) ;
 	    XPUSHs(sv_2mortal(newSViv(PTR2IV(RETVAL))));
 	    if (RETVAL)
 	        XPUSHs(sv_2mortal(newSVpv(Names[RETVAL->type], 0))) ;
@@ -3049,7 +3613,8 @@ _db_open_btree(self, ref)
 		db->prefix = newSVsv(sv) ;
 	    }
 
-	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname, DB_BTREE, flags, mode, &info, enc_passwd, enc_flags) ;
+	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname, 
+                DB_BTREE, flags, mode, &info, enc_passwd, enc_flags, hash) ;
 	}
 	OUTPUT:
 	    RETVAL
@@ -3076,7 +3641,9 @@ db_stat(db, flags=0)
 	    db->Status = ((db->dbp)->stat)(db->dbp, &stat, safemalloc, flags) ;
 #endif
 #endif
-	    if (db->Status == 0) {
+	    if (db->Status) {
+	        XSRETURN_UNDEF;
+	    } else {
 	    	RETVAL = (HV*)sv_2mortal((SV*)newHV()) ;
 		hv_store_iv(RETVAL, "bt_magic", stat->bt_magic);
 		hv_store_iv(RETVAL, "bt_version", stat->bt_version);
@@ -3189,7 +3756,8 @@ _db_open_recno(self, ref)
 	    db->array_base = (db->array_base == 0 ? 1 : 0) ;
 #endif /* ALLOW_RECNO_OFFSET */
 
-	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname, DB_RECNO, flags, mode, &info, enc_passwd, enc_flags) ;
+	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname, 
+                    DB_RECNO, flags, mode, &info, enc_passwd, enc_flags, hash) ;
 	}
 	OUTPUT:
 	    RETVAL
@@ -3256,7 +3824,8 @@ _db_open_queue(self, ref)
 	    db->array_base = (db->array_base == 0 ? 1 : 0) ;
 #endif /* ALLOW_RECNO_OFFSET */
 
-	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname, DB_QUEUE, flags, mode, &info, enc_passwd, enc_flags) ;
+	    RETVAL = my_db_open(db, ref, ref_dbenv, dbenv, txn, file, subname, 
+                DB_QUEUE, flags, mode, &info, enc_passwd, enc_flags, hash) ;
 #endif
 	}
 	OUTPUT:
@@ -3286,7 +3855,9 @@ db_stat(db, flags=0)
 	    db->Status = ((db->dbp)->stat)(db->dbp, &stat, safemalloc, flags) ;
 #endif
 #endif
-	    if (db->Status == 0) {
+	    if (db->Status) {
+	        XSRETURN_UNDEF;
+	    } else {
 	    	RETVAL = (HV*)sv_2mortal((SV*)newHV()) ;
 		hv_store_iv(RETVAL, "qs_magic", stat->qs_magic) ;
 		hv_store_iv(RETVAL, "qs_version", stat->qs_version);
@@ -3338,6 +3909,11 @@ db_close(db,flags=0)
 	    if (db->open_cursors)
 		softCrash("attempted to close a database with %d open cursor(s)",
 				db->open_cursors) ;
+#ifdef AT_LEAST_DB_4_3
+	    if (db->open_sequences)
+		softCrash("attempted to close a database with %d open sequence(s)",
+				db->open_sequences) ;
+#endif /* AT_LEAST_DB_4_3 */
 #endif /* STRICT_CLOSE */
 	    RETVAL =  db->Status = ((db->dbp)->close)(db->dbp, flags) ;
 	    if (db->parent_env && db->parent_env->open_dbs)
@@ -3403,6 +3979,9 @@ _db_cursor(db, flags=0)
               RETVAL->associated = db->associated ;
 	      RETVAL->secondary_db  = db->secondary_db;
               RETVAL->primary_recno_or_queue = db->primary_recno_or_queue ;
+#endif
+#ifdef AT_LEAST_DB_4_8
+              RETVAL->associated_foreign = db->associated_foreign ;
 #endif
               RETVAL->prefix  = db->prefix ;
               RETVAL->hash    = db->hash ;
@@ -3478,6 +4057,9 @@ _db_join(db, cursors, flags=0)
 	      RETVAL->secondary_db  = db->secondary_db;
               RETVAL->primary_recno_or_queue = db->primary_recno_or_queue ;
 #endif
+#ifdef AT_LEAST_DB_4_8
+              RETVAL->associated_foreign = db->associated_foreign ;
+#endif
               RETVAL->prefix  = db->prefix ;
               RETVAL->hash    = db->hash ;
 	      RETVAL->partial = db->partial ;
@@ -3532,6 +4114,21 @@ cds_enabled(db)
 	OUTPUT:
 	    RETVAL
 
+
+int
+stat_print(db, flags=0)
+	BerkeleyDB::Common  db
+	u_int32_t    flags
+	INIT:
+	  ckActive_Database(db->active) ;
+	CODE:
+#ifndef AT_LEAST_DB_4_3
+		softCrash("$db->stat_print needs Berkeley DB 4.3 or better") ;
+#else
+		RETVAL = db->dbp->stat_print(db->dbp, flags);
+#endif
+	OUTPUT:
+		RETVAL
 
 
 int
@@ -3855,7 +4452,7 @@ _Txn(db, txn=NULL)
 DualType
 truncate(db, countp, flags=0)
 	BerkeleyDB::Common	db
-	u_int32_t		countp
+	u_int32_t		countp = NO_INIT
 	u_int32_t		flags
 	PREINIT:
 	  dMY_CXT;
@@ -3874,7 +4471,7 @@ truncate(db, countp, flags=0)
 
 #ifdef AT_LEAST_DB_4_1
 #  define db_associate(db, sec, cb, flags)\
-	(db->Status = ((db->dbp)->associate)(db->dbp, NULL, sec->dbp, &cb, flags))
+	(db->Status = ((db->dbp)->associate)(db->dbp, db->txn, sec->dbp, &cb, flags))
 #else
 #  define db_associate(db, sec, cb, flags)\
 	(db->Status = ((db->dbp)->associate)(db->dbp, sec->dbp, &cb, flags))
@@ -3903,6 +4500,39 @@ associate(db, secondary, callback, flags=0)
           RETVAL = db_associate(db, secondary, associate_cb_recno, flags);
       else
           RETVAL = db_associate(db, secondary, associate_cb, flags);
+#endif
+	OUTPUT:
+	  RETVAL
+
+#define db_associate_foreign(db, sec, cb, flags)\
+	(db->Status = ((db->dbp)->associate_foreign)(db->dbp, sec->dbp, cb, flags))
+DualType
+associate_foreign(db, secondary, callback, flags)
+	BerkeleyDB::Common	db
+	BerkeleyDB::Common	secondary
+	SV*			callback
+	u_int32_t		flags
+    foreign_cb_type callback_ptr = NULL;
+	PREINIT:
+	  dMY_CXT;
+	INIT:
+	  ckActive_Database(db->active) ;
+	CODE:
+#ifndef AT_LEAST_DB_4_8
+          softCrash("associate_foreign needs Berkeley DB 4.8 or later") ;
+#else
+	  saveCurrentDB(db) ;
+	  if (callback != &PL_sv_undef)
+	  {
+          //softCrash("associate_foreign does not support callbacks yet") ;
+          secondary->associated_foreign = newSVsv(callback) ;
+          callback_ptr = ( secondary->recno_or_queue 
+                                ? associate_foreign_cb_recno 
+                                : associate_foreign_cb);
+	  }
+	  secondary->primary_recno_or_queue = db->recno_or_queue ;
+	  secondary->secondary_db = TRUE;
+      RETVAL = db_associate_foreign(db, secondary, callback_ptr, flags);
 #endif
 	OUTPUT:
 	  RETVAL
@@ -4009,6 +4639,9 @@ _c_dup(db, flags=0)
               RETVAL->dup_compare = db->dup_compare ;
 #ifdef AT_LEAST_DB_3_3
               RETVAL->associated = db->associated ;
+#endif
+#ifdef AT_LEAST_DB_4_8
+              RETVAL->associated_foreign = db->associated_foreign ;
 #endif
               RETVAL->prefix  = db->prefix ;
               RETVAL->hash    = db->hash ;
@@ -4359,41 +4992,42 @@ set_timeout(txn, timeout, flags=0)
 	    RETVAL
 
 int
-set_tx_max(txn, max)
-        BerkeleyDB::Txn txn
+set_tx_max(env, max)
+        BerkeleyDB::Env env
 	u_int32_t	 max
 	PREINIT:
 	  dMY_CXT;
 	INIT:
-	    ckActive_Transaction(txn->active) ;
+	    ckActive_Database(env->active) ;
 	CODE:
 #ifndef AT_LEAST_DB_2_3
 	    softCrash("$env->set_tx_max needs Berkeley DB 2_3.x or better") ;
 #else
-	    RETVAL = txn->Status = txn->txn->set_tx_max(txn->txn, max);
+            dieIfEnvOpened(env, "set_tx_max");
+	    RETVAL = env->Status = env->Env->set_tx_max(env->Env, max);
 #endif
 	OUTPUT:
 	    RETVAL
 
 int
-get_tx_max(txn, max)
-        BerkeleyDB::Txn txn
+get_tx_max(env, max)
+        BerkeleyDB::Env env
 	u_int32_t	 max = NO_INIT
 	PREINIT:
 	  dMY_CXT;
 	INIT:
-	    ckActive_Transaction(txn->active) ;
+	    ckActive_Database(env->active) ;
 	CODE:
 #ifndef AT_LEAST_DB_2_3
 	    softCrash("$env->get_tx_max needs Berkeley DB 2_3.x or better") ;
 #else
-	    RETVAL = txn->Status = txn->txn->get_tx_max(txn->txn, &max);
+	    RETVAL = env->Status = env->Env->get_tx_max(env->Env, &max);
 #endif
 	OUTPUT:
 	    RETVAL
 	    max
 
-int
+void
 _DESTROY(tid)
     BerkeleyDB::Txn	tid
 	PREINIT:
@@ -4406,12 +5040,9 @@ _DESTROY(tid)
 #else
 	    txn_abort(tid->txn) ;
 #endif
-          RETVAL = (int)tid ;
 	  hash_delete("BerkeleyDB::Term::Txn", (char *)tid) ;
           Safefree(tid) ;
 	  Trace(("End of BerkeleyDB::Txn::DESTROY\n")) ;
-	OUTPUT:
-	  RETVAL
 
 #define xx_txn_unlink(d,f,e)	txn_unlink(d,f,&(e->Env))
 DualType
@@ -4587,6 +5218,248 @@ FETCHSIZE(db)
         OUTPUT:
             RETVAL
 
+                
+MODULE = BerkeleyDB::Common  PACKAGE = BerkeleyDB::Common
+
+BerkeleyDB::Sequence
+db_create_sequence(db, flags=0)
+    BerkeleyDB::Common  db
+    u_int32_t		flags
+    PREINIT:
+      dMY_CXT;
+    CODE:
+    {
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->create_sequence needs Berkeley DB 4.3.x or better") ;
+#else
+        DB_SEQUENCE *	seq ;
+        saveCurrentDB(db);
+        RETVAL = NULL;
+        if (db_sequence_create(&seq, db->dbp, flags) == 0)
+        {
+            ZMALLOC(RETVAL, BerkeleyDB_Sequence_type);
+            RETVAL->db = db;
+            RETVAL->seq = seq;
+            RETVAL->active = TRUE;
+            ++ db->open_sequences ;
+        }
+#endif
+    }
+    OUTPUT:
+      RETVAL
+
+       
+MODULE = BerkeleyDB::Sequence            PACKAGE = BerkeleyDB::Sequence PREFIX = seq_
+ 
+DualType
+open(seq, key, flags=0)
+    BerkeleyDB::Sequence seq
+    DBTKEY_seq		 key
+    u_int32_t            flags
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->create_sequence needs Berkeley DB 4.3.x or better") ;
+#else
+        RETVAL = seq->seq->open(seq->seq, seq->db->txn, &key, flags);
+#endif
+    OUTPUT:
+        RETVAL
+
+DualType
+close(seq,flags=0)
+    BerkeleyDB::Sequence seq;
+    u_int32_t            flags;
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->close needs Berkeley DB 4.3.x or better") ;
+#else
+        RETVAL = 0;    
+        if (seq->active) {
+            -- seq->db->open_sequences;
+            RETVAL = (seq->seq->close)(seq->seq, flags);
+        }
+        seq->active = FALSE;
+#endif
+    OUTPUT:
+        RETVAL
+        
+DualType
+remove(seq,flags=0)
+    BerkeleyDB::Sequence seq;
+    u_int32_t            flags;
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->remove needs Berkeley DB 4.3.x or better") ;
+#else
+        RETVAL = 0;    
+        if (seq->active)
+            RETVAL = seq->seq->remove(seq->seq, seq->db->txn, flags);
+        seq->active = FALSE;
+#endif
+    OUTPUT:
+        RETVAL
+        
+void
+DESTROY(seq)
+    BerkeleyDB::Sequence seq
+    PREINIT:
+        dMY_CXT;
+    CODE:
+#ifdef AT_LEAST_DB_4_3
+        if (seq->active)
+            (seq->seq->close)(seq->seq, 0);
+        Safefree(seq);
+#endif
+
+DualType
+get(seq, element, delta=1, flags=0)
+    BerkeleyDB::Sequence seq;
+    IV                   delta;
+    db_seq_t             element = NO_INIT
+    u_int32_t            flags;
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->get needs Berkeley DB 4.3.x or better") ;
+#else
+        RETVAL = seq->seq->get(seq->seq, seq->db->txn, delta, &element, flags);
+#endif
+    OUTPUT:
+        RETVAL
+        element    
+        
+DualType
+get_key(seq, key)
+    BerkeleyDB::Sequence seq;
+    DBTKEY_seq		 key = NO_INIT
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->get_key needs Berkeley DB 4.3.x or better") ;
+#else
+        DBT_clear(key);
+        RETVAL = seq->seq->get_key(seq->seq, &key);
+#endif
+    OUTPUT:
+        RETVAL
+        key    
+        
+DualType
+initial_value(seq, low, high=0)
+    BerkeleyDB::Sequence seq;
+    int low
+    int high
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->initial_value needs Berkeley DB 4.3.x or better") ;
+#else
+        RETVAL = seq->seq->initial_value(seq->seq, (db_seq_t)(high << 32 + low));
+#endif
+    OUTPUT:
+        RETVAL
+        
+DualType
+set_cachesize(seq, size)
+    BerkeleyDB::Sequence seq;
+    int32_t size
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->set_cachesize needs Berkeley DB 4.3.x or better") ;
+#else
+        RETVAL = seq->seq->set_cachesize(seq->seq, size);
+#endif
+    OUTPUT:
+        RETVAL
+        
+DualType
+get_cachesize(seq, size)
+    BerkeleyDB::Sequence seq;
+    int32_t size = NO_INIT
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->get_cachesize needs Berkeley DB 4.3.x or better") ;
+#else
+        RETVAL = seq->seq->get_cachesize(seq->seq, &size);
+#endif
+    OUTPUT:
+        RETVAL
+        size    
+
+DualType
+set_flags(seq, flags)
+    BerkeleyDB::Sequence seq;
+    u_int32_t flags
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->set_flags needs Berkeley DB 4.3.x or better") ;
+#else
+        RETVAL = seq->seq->set_flags(seq->seq, flags);
+#endif
+    OUTPUT:
+        RETVAL
+        
+DualType
+get_flags(seq, flags)
+    BerkeleyDB::Sequence seq;
+    u_int32_t flags = NO_INIT
+    PREINIT:
+        dMY_CXT;
+    INIT:
+        ckActive_Sequence(seq->active) ;
+    CODE:
+#ifndef AT_LEAST_DB_4_3
+	    softCrash("$seq->get_flags needs Berkeley DB 4.3.x or better") ;
+#else
+        RETVAL = seq->seq->get_flags(seq->seq, &flags);
+#endif
+    OUTPUT:
+        RETVAL
+        flags    
+    
+DualType
+set_range(seq)
+    BerkeleyDB::Sequence seq;
+        NOT_IMPLEMENTED_YET
+
+DualType
+stat(seq)
+    BerkeleyDB::Sequence seq;
+        NOT_IMPLEMENTED_YET
+
 
 MODULE = BerkeleyDB        PACKAGE = BerkeleyDB
 
@@ -4603,7 +5476,7 @@ BOOT:
     (void)db_version(&Major, &Minor, &Patch) ;
     /* Check that the versions of db.h and libdb.a are the same */
     if (Major != DB_VERSION_MAJOR || Minor != DB_VERSION_MINOR
-                || Patch != DB_VERSION_PATCH)
+		|| Patch != DB_VERSION_PATCH)
         croak("\nBerkeleyDB needs compatible versions of libdb & db.h\n\tyou have db.h version %d.%d.%d and libdb version %d.%d.%d\n",
                 DB_VERSION_MAJOR, DB_VERSION_MINOR, DB_VERSION_PATCH,
                 Major, Minor, Patch) ;

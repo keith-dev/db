@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1999,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1999, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: log_debug.c,v 1.15 2008/01/08 20:58:41 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -11,7 +11,6 @@
 #include "db_int.h"
 #include "dbinc/db_page.h"
 #include "dbinc/db_am.h"
-#include "dbinc/log.h"
 
 static int __log_printf_int __P((ENV *, DB_TXN *, const char *, va_list));
 

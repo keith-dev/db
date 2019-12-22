@@ -1,7 +1,7 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 /*
  * Copyright (c) 1990, 1993, 1994, 1995, 1996
@@ -38,7 +38,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: bt_delete.c,v 12.30 2008/01/28 21:40:57 ubell Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -210,10 +210,10 @@ __bam_adjindx(dbc, h, indx, indx_copy, is_insert)
  * PUBLIC: int __bam_dpages __P((DBC *, int, int));
  */
 int
-__bam_dpages(dbc, use_top, update)
+__bam_dpages(dbc, use_top, flags)
 	DBC *dbc;
 	int use_top;
-	int update;
+	int flags;
 {
 	BINTERNAL *bi;
 	BTREE_CURSOR *cp;
@@ -261,8 +261,8 @@ __bam_dpages(dbc, use_top, update)
 	 * It will deadlock here.  Before we unlink the subtree, we relink the
 	 * leaf page chain.
 	 */
-	if (LEVEL(cp->csp->page) == 1 &&
-	    (ret = __bam_relink(dbc, cp->csp->page, PGNO_INVALID)) != 0)
+	if (LF_ISSET(BTD_RELINK) && LEVEL(cp->csp->page) == 1 &&
+	    (ret = __db_relink(dbc, cp->csp->page, NULL, PGNO_INVALID)) != 0)
 		goto discard;
 
 	/*
@@ -281,7 +281,7 @@ __bam_dpages(dbc, use_top, update)
 	if ((ret = __bam_ca_di(dbc, PGNO(epg->page), epg->indx, -1)) != 0)
 		goto discard;
 
-	if (update && epg->indx == 0) {
+	if (LF_ISSET(BTD_UPDATE) && epg->indx == 0) {
 		save_sp = cp->csp;
 		cp->csp = epg;
 		ret = __bam_pupdate(dbc, epg->page);
@@ -369,9 +369,13 @@ err:		for (; epg <= cp->csp; ++epg) {
 	 * tree can collapse one or more levels.  While there remains only a
 	 * single item on the root page, write lock the last page referenced
 	 * by the root page and copy it over the root page.
+	 * Note that if pgno is the root of a btree database then the root
+	 * cannot change as we have it locked.
 	 */
-	root_pgno = cp->root;
-	if (pgno != root_pgno || nitems != 1)
+	if (nitems != 1)
+		return (0);
+	root_pgno = BAM_ROOT_PGNO(dbc);
+	if (pgno != root_pgno)
 		return (0);
 
 	for (done = 0; !done;) {
@@ -380,16 +384,13 @@ err:		for (; epg <= cp->csp; ++epg) {
 		LOCK_INIT(p_lock);
 		LOCK_INIT(c_lock);
 
-		/* Lock the root. */
-		pgno = root_pgno;
-		if ((ret =
-		    __db_lget(dbc, 0, pgno, DB_LOCK_WRITE, 0, &p_lock)) != 0)
-			goto stop;
-		if ((ret = __memp_fget(mpf, &pgno, dbc->thread_info, dbc->txn,
-		    DB_MPOOL_DIRTY, &parent)) != 0)
-			goto stop;
+		/* Get the root. */
+		root_pgno = cp->root;
+		BAM_GET_ROOT(dbc, root_pgno,
+		    parent, DB_MPOOL_DIRTY, DB_LOCK_WRITE, p_lock, ret);
 
-		if (NUM_ENT(parent) != 1)
+		DB_ASSERT(dbp->env, parent != NULL);
+		if (ret != 0 || NUM_ENT(parent) != 1)
 			goto stop;
 
 		switch (TYPE(parent)) {
@@ -491,111 +492,6 @@ stop:			done = 1;
 }
 
 /*
- * __bam_relink --
- *	Relink around a deleted page.
- *
- * PUBLIC: int __bam_relink __P((DBC *, PAGE *, db_pgno_t));
- */
-int
-__bam_relink(dbc, pagep, new_pgno)
-	DBC *dbc;
-	PAGE *pagep;
-	db_pgno_t new_pgno;
-{
-	DB *dbp;
-	DB_LOCK npl, ppl;
-	DB_LSN *nlsnp, *plsnp, ret_lsn;
-	DB_MPOOLFILE *mpf;
-	PAGE *np, *pp;
-	int ret, t_ret;
-
-	dbp = dbc->dbp;
-	np = pp = NULL;
-	LOCK_INIT(npl);
-	LOCK_INIT(ppl);
-	nlsnp = plsnp = NULL;
-	mpf = dbp->mpf;
-	ret = 0;
-
-	/*
-	 * Retrieve and lock the one/two pages.  For a remove, we may need
-	 * two pages (the before and after).  For an add, we only need one
-	 * because, the split took care of the prev.
-	 */
-	if (pagep->next_pgno != PGNO_INVALID) {
-		if ((ret = __db_lget(dbc,
-		    0, pagep->next_pgno, DB_LOCK_WRITE, 0, &npl)) != 0)
-			goto err;
-		if ((ret = __memp_fget(mpf, &pagep->next_pgno,
-		    dbc->thread_info, dbc->txn, DB_MPOOL_DIRTY, &np)) != 0) {
-			ret = __db_pgerr(dbp, pagep->next_pgno, ret);
-			goto err;
-		}
-		nlsnp = &np->lsn;
-	}
-	if (pagep->prev_pgno != PGNO_INVALID) {
-		if ((ret = __db_lget(dbc,
-		    0, pagep->prev_pgno, DB_LOCK_WRITE, 0, &ppl)) != 0)
-			goto err;
-		if ((ret = __memp_fget(mpf, &pagep->prev_pgno,
-		    dbc->thread_info, dbc->txn, DB_MPOOL_DIRTY, &pp)) != 0) {
-			ret = __db_pgerr(dbp, pagep->prev_pgno, ret);
-			goto err;
-		}
-		plsnp = &pp->lsn;
-	}
-
-	/* Log the change. */
-	if (DBC_LOGGING(dbc)) {
-		if ((ret = __bam_relink_log(dbp, dbc->txn, &ret_lsn, 0,
-		    pagep->pgno, new_pgno, pagep->prev_pgno, plsnp,
-		    pagep->next_pgno, nlsnp)) != 0)
-			goto err;
-	} else
-		LSN_NOT_LOGGED(ret_lsn);
-	if (np != NULL)
-		np->lsn = ret_lsn;
-	if (pp != NULL)
-		pp->lsn = ret_lsn;
-
-	/*
-	 * Modify and release the two pages.
-	 */
-	if (np != NULL) {
-		if (new_pgno == PGNO_INVALID)
-			np->prev_pgno = pagep->prev_pgno;
-		else
-			np->prev_pgno = new_pgno;
-		ret = __memp_fput(mpf, dbc->thread_info, np, dbc->priority);
-		if ((t_ret = __TLPUT(dbc, npl)) != 0 && ret == 0)
-			ret = t_ret;
-		if (ret != 0)
-			goto err;
-	}
-
-	if (pp != NULL) {
-		if (new_pgno == PGNO_INVALID)
-			pp->next_pgno = pagep->next_pgno;
-		else
-			pp->next_pgno = new_pgno;
-		ret = __memp_fput(mpf, dbc->thread_info, pp, dbc->priority);
-		if ((t_ret = __TLPUT(dbc, ppl)) != 0 && ret == 0)
-			ret = t_ret;
-		if (ret != 0)
-			goto err;
-	}
-	return (0);
-
-err:	if (np != NULL)
-		(void)__memp_fput(mpf, dbc->thread_info, np, dbc->priority);
-	(void)__TLPUT(dbc, npl);
-	if (pp != NULL)
-		(void)__memp_fput(mpf, dbc->thread_info, pp, dbc->priority);
-	(void)__TLPUT(dbc, ppl);
-	return (ret);
-}
-
-/*
  * __bam_pupdate --
  *	Update parent key pointers up the tree.
  *
@@ -625,11 +521,9 @@ __bam_pupdate(dbc, lpg)
 		if ((ret = __memp_dirty(dbc->dbp->mpf, &epg->page,
 		    dbc->thread_info, dbc->txn, dbc->priority, 0)) != 0)
 			return (ret);
-		if ((ret = __bam_ditem(dbc, epg->page, epg->indx)) != 0)
-			return (ret);
 		epg->indx--;
 		if ((ret = __bam_pinsert(dbc, epg, 0,
-		    lpg, epg[1].page, BPI_NORECNUM)) != 0) {
+		    lpg, epg[1].page, BPI_NORECNUM | BPI_REPLACE)) != 0) {
 			if (ret == DB_NEEDSPLIT) {
 				/* This should not happen. */
 				__db_errx(env,
@@ -637,8 +531,10 @@ __bam_pupdate(dbc, lpg)
 				     dbc->dbp->fname, (u_long)PGNO(epg->page));
 				ret = __env_panic(env, EINVAL);
 			}
+			epg->indx++;
 			return (ret);
 		}
+		epg->indx++;
 	}
 	return (ret);
 }

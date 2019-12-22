@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1999,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1999, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: tcl_txn.c,v 12.25 2008/03/13 17:48:30 mbrey Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -140,6 +140,7 @@ tcl_Txn(interp, objc, objv, dbenv, envip)
 		"-lock_timeout",
 		"-read_committed",
 		"-read_uncommitted",
+		"-token",
 		"-txn_timeout",
 		"-txn_wait",
 #endif
@@ -156,6 +157,7 @@ tcl_Txn(interp, objc, objv, dbenv, envip)
 		TXNLOCK_TIMEOUT,
 		TXNREAD_COMMITTED,
 		TXNREAD_UNCOMMITTED,
+		TXNTOKEN,
 		TXNTIMEOUT,
 		TXNWAIT,
 #endif
@@ -172,21 +174,24 @@ tcl_Txn(interp, objc, objv, dbenv, envip)
 	Tcl_Obj *res;
 	u_int32_t flag;
 	int i, optindex, result, ret;
-	char *arg, msg[MSG_SIZE], newname[MSG_SIZE];
+	char *arg, *call, msg[MSG_SIZE], newname[MSG_SIZE];
 #ifdef CONFIG_TEST
 	db_timeout_t lk_time, tx_time;
 	u_int32_t lk_timeflag, tx_timeflag;
+	int use_token_buffer;
 #endif
 
 	result = TCL_OK;
 	memset(newname, 0, MSG_SIZE);
 
-	parent = NULL;
+	txn = parent = NULL;
+	call = "";
 	flag = 0;
 #ifdef CONFIG_TEST
 	COMPQUIET(tx_time, 0);
 	COMPQUIET(lk_time, 0);
 	lk_timeflag = tx_timeflag = 0;
+	use_token_buffer = 0;
 #endif
 	i = 2;
 	while (i < objc) {
@@ -218,6 +223,9 @@ get_timeout:		if (i >= objc) {
 			break;
 		case TXNREAD_UNCOMMITTED:
 			flag |= DB_READ_UNCOMMITTED;
+			break;
+		case TXNTOKEN:
+			use_token_buffer = 1;
 			break;
 		case TXNWAIT:
 			flag |= DB_TXN_WAIT;
@@ -259,54 +267,56 @@ get_timeout:		if (i >= objc) {
 	}
 	snprintf(newname, sizeof(newname), "%s.txn%d",
 	    envip->i_name, envip->i_envtxnid);
-	ip = _NewInfo(interp, NULL, newname, I_TXN);
-	if (ip == NULL) {
-		Tcl_SetResult(interp, "Could not set up info",
-		    TCL_STATIC);
+	if ((ip = _NewInfo(interp, NULL, newname, I_TXN)) == NULL)
 		return (TCL_ERROR);
-	}
 	_debug_check();
-	ret = dbenv->txn_begin(dbenv, parent, &txn, flag);
-	result = _ReturnSetup(interp, ret, DB_RETOK_STD(ret),
-	    "txn");
-	if (result == TCL_ERROR)
-		_DeleteInfo(ip);
-	else {
-		/*
-		 * Success.  Set up return.  Set up new info
-		 * and command widget for this txn.
-		 */
-		envip->i_envtxnid++;
-		if (parent)
-			ip->i_parent = _PtrToInfo(parent);
-		else
-			ip->i_parent = envip;
-		_SetInfoData(ip, txn);
-		(void)Tcl_CreateObjCommand(interp, newname,
-		    (Tcl_ObjCmdProc *)txn_Cmd, (ClientData)txn, NULL);
-		res = NewStringObj(newname, strlen(newname));
-		Tcl_SetObjResult(interp, res);
-#ifdef CONFIG_TEST
-		if (tx_timeflag != 0) {
-			ret = txn->set_timeout(txn, tx_time, tx_timeflag);
-			if (ret != 0) {
-				result =
-				    _ReturnSetup(interp, ret, DB_RETOK_STD(ret),
-					"set_timeout");
-				_DeleteInfo(ip);
-			}
-		}
-		if (lk_timeflag != 0) {
-			ret = txn->set_timeout(txn, lk_time, lk_timeflag);
-			if (ret != 0) {
-				result =
-				    _ReturnSetup(interp, ret, DB_RETOK_STD(ret),
-					"set_timeout");
-				_DeleteInfo(ip);
-			}
-		}
-#endif
+	if ((ret = dbenv->txn_begin(dbenv, parent, &txn, flag)) != 0) {
+		call = "txn";
+		goto err;
 	}
+
+#ifdef CONFIG_TEST
+	if (tx_timeflag != 0 &&
+	    (ret = txn->set_timeout(txn, tx_time, tx_timeflag)) != 0) {
+		call = "set_timeout(DB_SET_TXN_TIMEOUT)";
+		goto err;
+	}
+	if (lk_timeflag != 0 &&
+	    (ret = txn->set_timeout(txn, lk_time, lk_timeflag)) != 0) {
+		call = "set_timeout(DB_SET_LOCK_TIMEOUT)";
+		goto err;
+	}
+	if (use_token_buffer &&
+	    ((ret = __os_calloc(dbenv->env, 1,
+		DB_TXN_TOKEN_SIZE, &ip->i_commit_token)) != 0 ||
+	    (ret = txn->set_commit_token(txn, ip->i_commit_token)) != 0)) {
+		/* (_DeleteInfo() frees i_commit_token if necessary.) */
+		call = "set_commit_token";
+		goto err;
+	}
+#endif
+
+	/*
+	 * Success.  Set up return.  Set up new info
+	 * and command widget for this txn.
+	 */
+	envip->i_envtxnid++;
+	if (parent)
+		ip->i_parent = _PtrToInfo(parent);
+	else
+		ip->i_parent = envip;
+	_SetInfoData(ip, txn);
+	(void)Tcl_CreateObjCommand(interp, newname,
+	    (Tcl_ObjCmdProc *)txn_Cmd, (ClientData)txn, NULL);
+	res = NewStringObj(newname, strlen(newname));
+	Tcl_SetObjResult(interp, res);
+	return (TCL_OK);
+
+err:
+	result = _ReturnSetup(interp, ret, DB_RETOK_STD(ret), call);
+	if (txn != NULL)
+		(void)txn->abort(txn);
+	_DeleteInfo(ip);
 	return (result);
 }
 
@@ -416,16 +426,16 @@ tcl_TxnStat(interp, objc, objv, dbenv)
 	MAKE_STAT_LIST("Time of last checkpoint", sp->st_time_ckp);
 	MAKE_STAT_LIST("Last txn ID allocated", sp->st_last_txnid);
 	MAKE_STAT_LIST("Maximum txns", sp->st_maxtxns);
-	MAKE_STAT_LIST("Number aborted txns", sp->st_naborts);
-	MAKE_STAT_LIST("Number txns begun", sp->st_nbegins);
-	MAKE_STAT_LIST("Number committed txns", sp->st_ncommits);
+	MAKE_WSTAT_LIST("Number aborted txns", sp->st_naborts);
+	MAKE_WSTAT_LIST("Number txns begun", sp->st_nbegins);
+	MAKE_WSTAT_LIST("Number committed txns", sp->st_ncommits);
 	MAKE_STAT_LIST("Number active txns", sp->st_nactive);
 	MAKE_STAT_LIST("Number of snapshot txns", sp->st_nsnapshot);
 	MAKE_STAT_LIST("Number restored txns", sp->st_nrestores);
 	MAKE_STAT_LIST("Maximum active txns", sp->st_maxnactive);
 	MAKE_STAT_LIST("Maximum snapshot txns", sp->st_maxnsnapshot);
-	MAKE_STAT_LIST("Number of region lock waits", sp->st_region_wait);
-	MAKE_STAT_LIST("Number of region lock nowaits", sp->st_region_nowait);
+	MAKE_WSTAT_LIST("Number of region lock waits", sp->st_region_wait);
+	MAKE_WSTAT_LIST("Number of region lock nowaits", sp->st_region_nowait);
 	for (i = 0, p = sp->st_txnarray; i < sp->st_nactive; i++, p++)
 		LIST_FOREACH(ip, &__db_infohead, entries) {
 			if (ip->i_type != I_TXN)
@@ -522,7 +532,7 @@ txn_Cmd(clientData, interp, objc, objv)
 	Tcl_Obj *res;
 	int cmdindex, result, ret;
 #ifdef CONFIG_TEST
-	u_int8_t *gid, garray[DB_XIDDATASIZE];
+	u_int8_t *gid, garray[DB_GID_SIZE];
 	int length;
 	const char *name;
 #endif
@@ -662,10 +672,14 @@ tcl_TxnCommit(interp, objc, objv, txnp, txnip)
 		COMSYNC,
 		COMWRNOSYNC
 	};
+	Tcl_Obj *res;
+	void *p;
 	u_int32_t flag;
 	int optindex, result, ret;
 
+#ifndef CONFIG_TEST
 	COMPQUIET(txnip, NULL);
+#endif
 
 	result = TCL_OK;
 	flag = 0;
@@ -694,6 +708,13 @@ tcl_TxnCommit(interp, objc, objv, txnp, txnip)
 	ret = txnp->commit(txnp, flag);
 	result = _ReturnSetup(interp, ret, DB_RETOK_STD(ret),
 	    "txn commit");
+#ifdef CONFIG_TEST
+	if (result == TCL_OK && txnip->i_commit_token != NULL) {
+		p = txnip->i_commit_token;
+		res = Tcl_NewByteArrayObj(p, DB_TXN_TOKEN_SIZE);
+		Tcl_SetObjResult(interp, res);
+	}
+#endif
 	return (result);
 }
 
@@ -728,8 +749,8 @@ for (i = 0; i < count; i++) {						\
 	_SetInfoData(ip, p->txn);					\
 	(void)Tcl_CreateObjCommand(interp, newname,			\
 	    (Tcl_ObjCmdProc *)txn_Cmd, (ClientData)p->txn, NULL);	\
-	result = _SetListElem(interp, res, newname, strlen(newname),	\
-	    p->gid, DB_XIDDATASIZE);					\
+	result = _SetListElem(interp, res, newname,			\
+	    (u_int32_t)strlen(newname), p->gid, DB_GID_SIZE);		\
 	if (result != TCL_OK)						\
 		goto error;						\
 }
@@ -737,7 +758,7 @@ for (i = 0; i < count; i++) {						\
 	DBTCL_INFO *ip;
 	DB_PREPLIST prep[DBTCL_PREP], *p;
 	Tcl_Obj *res;
-	long count, i;
+	u_int32_t count, i;
 	int result, ret;
 	char newname[MSG_SIZE];
 

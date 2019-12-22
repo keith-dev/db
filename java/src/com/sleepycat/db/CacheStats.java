@@ -4,7 +4,7 @@
  *
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 
 package com.sleepycat.db;
@@ -101,67 +101,67 @@ public class CacheStats {
         return st_map;
     }
 
-    private int st_cache_hit;
+    private long st_cache_hit;
     /**
     Requested pages found in the cache.
     */
-    public int getCacheHit() {
+    public long getCacheHit() {
         return st_cache_hit;
     }
 
-    private int st_cache_miss;
+    private long st_cache_miss;
     /**
     Requested pages not found in the cache.
     */
-    public int getCacheMiss() {
+    public long getCacheMiss() {
         return st_cache_miss;
     }
 
-    private int st_page_create;
+    private long st_page_create;
     /**
     Pages created in the cache.
     */
-    public int getPageCreate() {
+    public long getPageCreate() {
         return st_page_create;
     }
 
-    private int st_page_in;
+    private long st_page_in;
     /**
     Pages read into the cache.
     */
-    public int getPageIn() {
+    public long getPageIn() {
         return st_page_in;
     }
 
-    private int st_page_out;
+    private long st_page_out;
     /**
     Pages written from the cache to the backing file.
     */
-    public int getPageOut() {
+    public long getPageOut() {
         return st_page_out;
     }
 
-    private int st_ro_evict;
+    private long st_ro_evict;
     /**
     Clean pages forced from the cache.
     */
-    public int getRoEvict() {
+    public long getRoEvict() {
         return st_ro_evict;
     }
 
-    private int st_rw_evict;
+    private long st_rw_evict;
     /**
     Dirty pages forced from the cache.
     */
-    public int getRwEvict() {
+    public long getRwEvict() {
         return st_rw_evict;
     }
 
-    private int st_page_trickle;
+    private long st_page_trickle;
     /**
     Dirty pages written using {@link com.sleepycat.db.Environment#trickleCacheWrite Environment.trickleCacheWrite}.
     */
-    public int getPageTrickle() {
+    public long getPageTrickle() {
         return st_page_trickle;
     }
 
@@ -189,6 +189,14 @@ public class CacheStats {
         return st_hash_buckets;
     }
 
+    private int st_pagesize;
+    /**
+    Page size in bytes.
+    */
+    public int getPageSize() {
+        return st_pagesize;
+    }
+
     private int st_hash_searches;
     /**
     Total number of buffer hash table lookups.
@@ -205,139 +213,147 @@ public class CacheStats {
         return st_hash_longest;
     }
 
-    private int st_hash_examined;
+    private long st_hash_examined;
     /**
     Total number of hash elements traversed during hash table lookups.
     */
-    public int getHashExamined() {
+    public long getHashExamined() {
         return st_hash_examined;
     }
 
-    private int st_hash_nowait;
+    private long st_hash_nowait;
     /**
     The number of times that a thread of control was able to obtain a
     hash bucket lock without waiting.
     */
-    public int getHashNowait() {
+    public long getHashNowait() {
         return st_hash_nowait;
     }
 
-    private int st_hash_wait;
+    private long st_hash_wait;
     /**
     The number of times that a thread of control was forced to wait
     before obtaining a hash bucket lock.
     */
-    public int getHashWait() {
+    public long getHashWait() {
         return st_hash_wait;
     }
 
-    private int st_hash_max_nowait;
+    private long st_hash_max_nowait;
     /**
     The number of times a thread of control was able to obtain the
     hash bucket lock without waiting on the bucket which had the
     maximum number of times that a thread of control needed to wait.
     */
-    public int getHashMaxNowait() {
+    public long getHashMaxNowait() {
         return st_hash_max_nowait;
     }
 
-    private int st_hash_max_wait;
+    private long st_hash_max_wait;
     /**
     The maximum number of times any hash bucket lock was waited for by
     a thread of control.
     */
-    public int getHashMaxWait() {
+    public long getHashMaxWait() {
         return st_hash_max_wait;
     }
 
-    private int st_region_nowait;
+    private long st_region_nowait;
     /**
     The number of times that a thread of control was able to obtain a
     region lock without waiting.
     */
-    public int getRegionNowait() {
+    public long getRegionNowait() {
         return st_region_nowait;
     }
 
-    private int st_region_wait;
+    private long st_region_wait;
     /**
     The number of times that a thread of control was forced to wait
     before obtaining a region lock.
     */
-    public int getRegionWait() {
+    public long getRegionWait() {
         return st_region_wait;
     }
 
-    private int st_mvcc_frozen;
+    private long st_mvcc_frozen;
     /**
     Number of buffers frozen.
     */
-    public int getMultiversionFrozen() {
+    public long getMultiversionFrozen() {
         return st_mvcc_frozen;
     }
 
-    private int st_mvcc_thawed;
+    private long st_mvcc_thawed;
     /**
     Number of buffers thawed.
     */
-    public int getMultiversionThawed() {
+    public long getMultiversionThawed() {
         return st_mvcc_thawed;
     }
 
-    private int st_mvcc_freed;
+    private long st_mvcc_freed;
     /**
     Number of frozen buffers freed.
     */
-    public int getMultiversionFreed() {
+    public long getMultiversionFreed() {
         return st_mvcc_freed;
     }
 
-    private int st_alloc;
+    private long st_alloc;
     /**
     Number of page allocations.
     */
-    public int getAlloc() {
+    public long getAlloc() {
         return st_alloc;
     }
 
-    private int st_alloc_buckets;
+    private long st_alloc_buckets;
     /**
     Number of hash buckets checked during allocation.
     */
-    public int getAllocBuckets() {
+    public long getAllocBuckets() {
         return st_alloc_buckets;
     }
 
-    private int st_alloc_max_buckets;
+    private long st_alloc_max_buckets;
     /**
     Maximum number of hash buckets checked during an allocation.
     */
-    public int getAllocMaxBuckets() {
+    public long getAllocMaxBuckets() {
         return st_alloc_max_buckets;
     }
 
-    private int st_alloc_pages;
+    private long st_alloc_pages;
     /**
     Number of pages checked during allocation.
     */
-    public int getAllocPages() {
+    public long getAllocPages() {
         return st_alloc_pages;
     }
 
-    private int st_alloc_max_pages;
+    private long st_alloc_max_pages;
     /**
     Maximum number of pages checked during an allocation.
     */
-    public int getAllocMaxPages() {
+    public long getAllocMaxPages() {
         return st_alloc_max_pages;
     }
 
-    private int st_io_wait;
+    private long st_io_wait;
     /**
     Number of operations blocked waiting for I/O to complete.
     */
-    public int getIoWait() {
+    public long getIoWait() {
         return st_io_wait;
+    }
+
+    private long st_sync_interrupted;
+    /**
+    Number of mpool sync operations interrupted.
+    */
+    public long getSyncInterrupted() {
+        return st_sync_interrupted;
     }
 
     private int st_regsize;
@@ -375,6 +391,7 @@ public class CacheStats {
             + "\n  st_page_clean=" + st_page_clean
             + "\n  st_page_dirty=" + st_page_dirty
             + "\n  st_hash_buckets=" + st_hash_buckets
+            + "\n  st_pagesize=" + st_pagesize
             + "\n  st_hash_searches=" + st_hash_searches
             + "\n  st_hash_longest=" + st_hash_longest
             + "\n  st_hash_examined=" + st_hash_examined
@@ -393,6 +410,7 @@ public class CacheStats {
             + "\n  st_alloc_pages=" + st_alloc_pages
             + "\n  st_alloc_max_pages=" + st_alloc_max_pages
             + "\n  st_io_wait=" + st_io_wait
+            + "\n  st_sync_interrupted=" + st_sync_interrupted
             + "\n  st_regsize=" + st_regsize
             ;
     }

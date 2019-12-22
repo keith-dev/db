@@ -1,7 +1,7 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 /*
  * Copyright (c) 1990, 1993, 1994, 1995, 1996
@@ -35,7 +35,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: db.c,v 12.81 2008/02/18 19:11:59 bschmeck Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -47,8 +47,8 @@
 #include "dbinc/fop.h"
 #include "dbinc/hash.h"
 #include "dbinc/lock.h"
-#include "dbinc/log.h"
 #include "dbinc/mp.h"
+#include "dbinc/partition.h"
 #include "dbinc/qam.h"
 #include "dbinc/txn.h"
 
@@ -57,7 +57,6 @@ static int __db_disassociate_foreign __P ((DB *));
 
 #ifdef CONFIG_TEST
 static int __db_makecopy __P((ENV *, const char *, const char *));
-static int __db_testdocopy __P((ENV *, const char *));
 static int __qam_testdocopy __P((DB *, const char *));
 #endif
 
@@ -111,8 +110,8 @@ __db_master_open(subdbp, ip, txn, name, flags, mode, dbpp)
 	 */
 	LF_CLR(DB_EXCL);
 	LF_SET(DB_RDWRMASTER);
-	if ((ret = __db_open(dbp, ip,
-	    txn, name, NULL, DB_BTREE, flags, mode, PGNO_BASE_MD)) != 0)
+	if ((ret = __db_open(dbp, ip, txn,
+	    name, NULL, DB_BTREE, flags, mode, PGNO_BASE_MD)) != 0)
 		goto err;
 
 	/*
@@ -134,7 +133,7 @@ __db_master_open(subdbp, ip, txn, name, flags, mode, dbpp)
 
 	if (0) {
 err:		if (!F_ISSET(dbp, DB_AM_DISCARD))
-			(void)__db_close(dbp, txn, 0);
+			(void)__db_close(dbp, txn, DB_NOSYNC);
 	}
 
 	return (ret);
@@ -175,7 +174,8 @@ __db_master_update(mdbp, sdbp, ip, txn, subdb, type, action, newname, flags)
 	 *
 	 * Might we modify the master database?  If so, we'll need to lock.
 	 */
-	modify = (action != MU_OPEN || LF_ISSET(DB_CREATE)) ? 1 : 0;
+	modify = (!F_ISSET(mdbp, DB_AM_RDONLY) &&
+	    (action != MU_OPEN || LF_ISSET(DB_CREATE))) ? 1 : 0;
 
 	if ((ret = __db_cursor(mdbp, ip, txn, &dbc,
 	    (CDB_LOCKING(env) && modify) ? DB_WRITECURSOR : 0)) != 0)
@@ -333,8 +333,12 @@ __db_master_update(mdbp, sdbp, ip, txn, subdb, type, action, newname, flags)
 		}
 
 		/* Create a subdatabase. */
+		if (F_ISSET(mdbp, DB_AM_RDONLY)) {
+			ret = EBADF;
+			goto err;
+		}
 		if ((ret = __db_new(dbc,
-		    type == DB_HASH ? P_HASHMETA : P_BTREEMETA, &p)) != 0)
+		    type == DB_HASH ? P_HASHMETA : P_BTREEMETA, NULL, &p)) != 0)
 			goto err;
 		sdbp->meta_pgno = PGNO(p);
 
@@ -349,10 +353,23 @@ __db_master_update(mdbp, sdbp, ip, txn, subdb, type, action, newname, flags)
 		memset(&ndata, 0, sizeof(ndata));
 		ndata.data = &t_pgno;
 		ndata.size = sizeof(db_pgno_t);
-		if ((ret = __dbc_put(dbc, &key, &ndata, DB_KEYLAST)) != 0)
+		if ((ret = __dbc_put(dbc, &key, &ndata, 0)) != 0)
 			goto err;
 		F_SET(sdbp, DB_AM_CREATED);
 		break;
+
+	case MU_MOVE:
+		/* We should have found something if we're moving it. */
+		if (ret != 0)
+			goto err;
+		t_pgno = sdbp->meta_pgno;
+		DB_HTONL_SWAP(env, &t_pgno);
+		memset(&ndata, 0, sizeof(ndata));
+		ndata.data = &t_pgno;
+		ndata.size = sizeof(db_pgno_t);
+		if ((ret = __dbc_put(dbc, &key, &ndata, 0)) != 0)
+			goto err;
+		mdbp->mpf->mfp->revision++;
 	}
 
 err:
@@ -630,7 +647,7 @@ __env_mpool(dbp, fname, flags)
 		    dbp->type != DB_QUEUE && dbp->type != DB_UNKNOWN)
 			LF_SET(DB_MULTIVERSION);
 
-	if ((ret = __memp_fopen(mpf, NULL, fname,
+	if ((ret = __memp_fopen(mpf, NULL, fname, &dbp->dirname,
 	    LF_ISSET(DB_CREATE | DB_DURABLE_UNKNOWN | DB_MULTIVERSION |
 		DB_NOMMAP | DB_ODDFILESIZE | DB_RDONLY | DB_TRUNCATE) |
 	    (F_ISSET(env->dbenv, DB_ENV_DIRECT_DB) ? DB_DIRECT : 0) |
@@ -679,17 +696,7 @@ __db_close(dbp, txn, flags)
 	int db_ref, deferred_close, ret, t_ret;
 
 	env = dbp->env;
-	deferred_close = ret = 0;
-
-	/*
-	 * Validate arguments, but as a DB handle destructor, we can't fail.
-	 *
-	 * Check for consistent transaction usage -- ignore errors.  Only
-	 * internal callers specify transactions, so it's a serious problem
-	 * if we get error messages.
-	 */
-	if (txn != NULL)
-		(void)__db_check_txn(dbp, txn, DB_LOCK_INVALIDID, 0);
+	deferred_close = 0;
 
 	/* Refresh the structure and close any underlying resources. */
 	ret = __db_refresh(dbp, txn, flags, &deferred_close, 0);
@@ -788,6 +795,8 @@ __db_refresh(dbp, txn, flags, deferred_closep, reuse)
 		if ((t_ret = __db_disassociate(sdbp)) != 0 && ret == 0)
 			ret = t_ret;
 	}
+	if (F_ISSET(dbp, DB_AM_SECONDARY))
+		LIST_REMOVE(dbp, s_links);
 
 	/*
 	 * Disassociate ourself from any databases using us as a foreign key
@@ -821,19 +830,24 @@ __db_refresh(dbp, txn, flags, deferred_closep, reuse)
 		ret = t_ret;
 
 	/*
-	 * Go through the active cursors and call the cursor recycle routine,
+	 * Go through the active cursors, unregister each cursor from its
+	 * transaction if any, and call the cursor recycle routine,
 	 * which resolves pending operations and moves the cursors onto the
 	 * free list.  Then, walk the free list and call the cursor destroy
 	 * routine.  Note that any failure on a close is considered "really
 	 * bad" and we just break out of the loop and force forward.
 	 */
 	resync = TAILQ_FIRST(&dbp->active_queue) == NULL ? 0 : 1;
-	while ((dbc = TAILQ_FIRST(&dbp->active_queue)) != NULL)
+	while ((dbc = TAILQ_FIRST(&dbp->active_queue)) != NULL) {
+		if (dbc->txn != NULL)
+			TAILQ_REMOVE(&(dbc->txn->my_cursors), dbc, txn_cursors);
+
 		if ((t_ret = __dbc_close(dbc)) != 0) {
 			if (ret == 0)
 				ret = t_ret;
 			break;
 		}
+	}
 
 	while ((dbc = TAILQ_FIRST(&dbp->free_queue)) != NULL)
 		if ((t_ret = __dbc_destroy(dbc)) != 0) {
@@ -869,6 +883,7 @@ __db_refresh(dbp, txn, flags, deferred_closep, reuse)
 		ret = t_ret;
 
 never_opened:
+	MUTEX_LOCK(env, env->mtx_dblist);
 	/*
 	 * At this point, we haven't done anything to render the DB handle
 	 * unusable, at least by a transaction abort.  Take the opportunity
@@ -897,6 +912,7 @@ never_opened:
 		} else {
 			if ((t_ret = __dbreg_close_id(dbp,
 			    txn, DBREG_CLOSE)) != 0 && txn != NULL) {
+				MUTEX_UNLOCK(env, env->mtx_dblist);
 				/*
 				 * We're in a txn and the attempt to log the
 				 * close failed;  let the txn subsystem know
@@ -948,7 +964,6 @@ never_opened:
 	 * blindly call the underlying TAILQ_REMOVE macro.  Explicitly reset
 	 * the field values to NULL so that we can't call TAILQ_REMOVE twice.
 	 */
-	MUTEX_LOCK(env, env->mtx_dblist);
 	if (!reuse &&
 	    (dbp->dblistlinks.tqe_next != NULL ||
 	    dbp->dblistlinks.tqe_prev != NULL)) {
@@ -992,6 +1007,11 @@ never_opened:
 	 * otherwise affect closing down the database.  Specifically, we can't
 	 * abort and recover any of the information they control.
 	 */
+#ifdef HAVE_PARTITION
+	if (dbp->p_internal != NULL &&
+	    (t_ret = __partition_close(dbp, txn, flags)) != 0 && ret == 0)
+		ret = t_ret;
+#endif
 	if ((t_ret = __bam_db_close(dbp)) != 0 && ret == 0)
 		ret = t_ret;
 	if ((t_ret = __ham_db_close(dbp)) != 0 && ret == 0)
@@ -1051,10 +1071,6 @@ never_opened:
 		 */
 		save_flags = F_ISSET(dbp, DB_AM_INMEM | DB_AM_TXN);
 
-		/*
-		 * XXX If this is an XA handle, we'll want to specify
-		 * DB_XA_CREATE.
-		 */
 		if ((ret = __bam_db_create(dbp)) != 0)
 			return (ret);
 		if ((ret = __ham_db_create(dbp)) != 0)
@@ -1231,10 +1247,63 @@ __db_log_page(dbp, txn, lsn, pgno, page)
 	page_dbt.size = dbp->pgsize;
 	page_dbt.data = page;
 
-	ret = __crdel_metasub_log(dbp, txn, &new_lsn, 0, pgno, &page_dbt, lsn);
+	ret = __crdel_metasub_log(dbp, txn, &new_lsn, F_ISSET(dbp,
+	    DB_AM_NOT_DURABLE) ? DB_LOG_NOT_DURABLE : 0, pgno, &page_dbt, lsn);
 
 	if (ret == 0)
 		page->lsn = new_lsn;
+	return (ret);
+}
+
+/*
+ * __db_walk_cursors
+ *	Walk all cursors for a database.
+ *
+ * PUBLIC: int __db_walk_cursors __P((DB *, DBC *,
+ * PUBLIC:	int (*) __P((DBC *, DBC *,
+ * PUBLIC:      u_int32_t *, db_pgno_t, u_int32_t, void *)),
+ * PUBLIC:      u_int32_t *, db_pgno_t, u_int32_t, void *));
+ */
+ int
+ __db_walk_cursors(dbp, my_dbc, func, countp, pgno, indx, args)
+	DB *dbp;
+	DBC *my_dbc;
+	int (*func)__P((DBC *, DBC *,
+	    u_int32_t *, db_pgno_t, u_int32_t, void *));
+	u_int32_t *countp;
+	db_pgno_t pgno;
+	u_int32_t indx;
+	void *args;
+{
+	ENV *env;
+	DB *ldbp;
+	DBC *dbc;
+	int ret;
+
+	env = dbp->env;
+	ret = 0;
+
+	MUTEX_LOCK(env, env->mtx_dblist);
+	FIND_FIRST_DB_MATCH(env, dbp, ldbp);
+	for (*countp = 0;
+	    ldbp != NULL && ldbp->adj_fileid == dbp->adj_fileid;
+	    ldbp = TAILQ_NEXT(ldbp, dblistlinks)) {
+loop:		MUTEX_LOCK(env, ldbp->mutex);
+		TAILQ_FOREACH(dbc, &ldbp->active_queue, links)
+			if ((ret = (func)(dbc, my_dbc,
+			    countp, pgno, indx, args)) != 0)
+				break;
+		/*
+		 * We use the error to communicate that function
+		 * dropped the mutex.
+		 */
+		if (ret == DB_LOCK_NOTGRANTED)
+			goto loop;
+		MUTEX_UNLOCK(env, ldbp->mutex);
+		if (ret != 0)
+			break;
+	}
+	MUTEX_UNLOCK(env, env->mtx_dblist);
 	return (ret);
 }
 
@@ -1339,6 +1408,11 @@ __db_testcopy(env, dbp, name)
 	if (dbp != NULL && dbp->type == DB_QUEUE)
 		return (__qam_testdocopy(dbp, name));
 	else
+#ifdef HAVE_PARTITION
+	if (dbp != NULL && DB_IS_PARTITIONED(dbp))
+		return (__part_testdocopy(dbp, name));
+	else
+#endif
 		return (__db_testdocopy(env, name));
 }
 
@@ -1379,8 +1453,9 @@ done:	__os_free(dbp->env, filelist);
 /*
  * __db_testdocopy
  *	Create a copy of all backup files and our "main" DB.
+ * PUBLIC: int __db_testdocopy __P((ENV *, const char *));
  */
-static int
+int
 __db_testdocopy(env, name)
 	ENV *env;
 	const char *name;
@@ -1395,7 +1470,7 @@ __db_testdocopy(env, name)
 
 	/* Create the real backing file name. */
 	if ((ret = __db_appname(env,
-	    DB_APP_DATA, name, 0, NULL, &real_name)) != 0)
+	    DB_APP_DATA, name, NULL, &real_name)) != 0)
 		return (ret);
 
 	/*
@@ -1460,8 +1535,8 @@ __db_testdocopy(env, name)
 			__os_free(env, real_name);
 			real_name = NULL;
 		}
-		if ((ret = __db_appname(
-		    env, DB_APP_DATA, namesp[i], 0, NULL, &real_name)) != 0)
+		if ((ret = __db_appname(env,
+		    DB_APP_DATA, namesp[i], NULL, &real_name)) != 0)
 			goto err;
 		if (copy != NULL) {
 			__os_free(env, copy);

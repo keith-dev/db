@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2001,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2001, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: rep_net.c,v 12.20 2008/02/27 22:04:15 alanb Exp $
+ * $Id$
  */
 
 #include <sys/types.h>
@@ -20,7 +20,7 @@
  * these might already have been included.  In that case, it would be bad
  * to include them again.
  */
-#include <dbinc/queue.h>		/* !!!: for the LIST_XXX macros. */
+#include "dbinc/queue.h"		/* !!!: for the LIST_XXX macros. */
 #endif
 
 int machtab_add __P((machtab_t *, socket_t, u_int32_t, int, int *));
@@ -508,7 +508,8 @@ get_next_message(fd, rec, control)
 	if (rsize > 0) {
 		if (rec->size < rsize)
 			rec->data = realloc(rec->data, rsize);
-		recbuf = rec->data;
+		if ((recbuf = rec->data) == NULL)
+			return (1);
 		nr = readn(fd, recbuf, rsize);
 	} else {
 		if (rec->data != NULL)
@@ -527,6 +528,8 @@ get_next_message(fd, rec, control)
 		controlbuf = control->data;
 		if (control->size < csize)
 			controlbuf = realloc(controlbuf, csize);
+		if (controlbuf == NULL)
+			return (1);
 		nr = readn(fd, controlbuf, csize);
 		if (nr != csize)
 			return (1);
@@ -582,7 +585,7 @@ readn(fd, vptr, n)
 
 /*
  * quote_send --
- * The f_send function for DB_ENV->set_rep_transport.
+ * The f_send function for DB_ENV->rep_set_transport.
  */
 int
 quote_send(dbenv, control, rec, lsnp, eid, flags)

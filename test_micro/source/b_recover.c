@@ -1,5 +1,9 @@
 /*
- * $Id: b_recover.c,v 1.12 2008/03/13 20:47:06 mbrey Exp $
+ * See the file LICENSE for redistribution information.
+ *
+ * Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
+ *
+ * $Id$
  */
 #include "bench.h"
 
@@ -63,7 +67,7 @@ b_recover(int argc, char *argv[])
 
 	/* Create the database. */
 	DB_BENCH_ASSERT(db_create(&dbp, dbenv, 0) == 0);
-#if DB_VERSION_MAJOR >= 4 && DB_VERSION_MINOR >= 1
+#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 1)
 	DB_BENCH_ASSERT(dbp->open(dbp, NULL,
 	    TESTFILE, NULL, DB_BTREE, DB_CREATE | DB_AUTO_COMMIT, 0666) == 0);
 #else

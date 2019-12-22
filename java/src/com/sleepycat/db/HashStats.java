@@ -4,7 +4,7 @@
  *
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 
 package com.sleepycat.db;
@@ -111,14 +111,14 @@ was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfi
         return hash_free;
     }
 
-    private int hash_bfree;
+    private long hash_bfree;
     /**
     The number of bytes free on bucket pages.
 <p>
 The information is only included if the {@link com.sleepycat.db.Database#getStats Database.getStats} call
 was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfig.setFast} method.
     */
-    public int getBFree() {
+    public long getBFree() {
         return hash_bfree;
     }
 
@@ -133,14 +133,14 @@ was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfi
         return hash_bigpages;
     }
 
-    private int hash_big_bfree;
+    private long hash_big_bfree;
     /**
     The number of bytes free on big item pages.
 <p>
 The information is only included if the {@link com.sleepycat.db.Database#getStats Database.getStats} call
 was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfig.setFast} method.
     */
-    public int getBigBFree() {
+    public long getBigBFree() {
         return hash_big_bfree;
     }
 
@@ -155,14 +155,14 @@ was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfi
         return hash_overflows;
     }
 
-    private int hash_ovfl_free;
+    private long hash_ovfl_free;
     /**
     The number of bytes free on overflow pages.
 <p>
 The information is only included if the {@link com.sleepycat.db.Database#getStats Database.getStats} call
 was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfig.setFast} method.
     */
-    public int getOvflFree() {
+    public long getOvflFree() {
         return hash_ovfl_free;
     }
 
@@ -177,14 +177,14 @@ was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfi
         return hash_dup;
     }
 
-    private int hash_dup_free;
+    private long hash_dup_free;
     /**
     The number of bytes free on duplicate pages.
 <p>
 The information is only included if the {@link com.sleepycat.db.Database#getStats Database.getStats} call
 was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfig.setFast} method.
     */
-    public int getDupFree() {
+    public long getDupFree() {
         return hash_dup_free;
     }
 

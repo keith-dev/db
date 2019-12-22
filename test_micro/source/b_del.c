@@ -1,5 +1,9 @@
 /*
- * $Id: b_del.c,v 1.15 2008/01/31 17:01:22 bostic Exp $
+ * See the file LICENSE for redistribution information.
+ *
+ * Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
+ *
+ * $Id$
  */
 #include "bench.h"
 
@@ -79,7 +83,7 @@ b_del(int argc, char *argv[])
 	if (type == DB_QUEUE)
 		DB_BENCH_ASSERT(dbp->set_re_len(dbp, 20) == 0);
 
-#if DB_VERSION_MAJOR >= 4 && DB_VERSION_MINOR >= 1
+#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 1)
 	DB_BENCH_ASSERT(
 	    dbp->open(dbp, NULL, TESTFILE, NULL, type, DB_CREATE, 0666) == 0);
 #else

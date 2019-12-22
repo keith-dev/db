@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2001,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2001, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: db_remove.c,v 12.43 2008/03/12 20:33:34 mbrey Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -17,9 +17,10 @@
 #include "dbinc/mp.h"
 #include "dbinc/txn.h"
 
-static int __db_dbtxn_remove __P((DB *, DB_TXN *, const char *, const char *));
-static int __db_subdb_remove __P((DB *,
+static int __db_dbtxn_remove __P((DB *,
     DB_THREAD_INFO *, DB_TXN *, const char *, const char *));
+static int __db_subdb_remove __P((DB *,
+    DB_THREAD_INFO *, DB_TXN *, const char *, const char *, u_int32_t));
 
 /*
  * __env_dbremove_pp
@@ -50,7 +51,8 @@ __env_dbremove_pp(dbenv, txn, name, subdb, flags)
 	 * The actual argument checking is simple, do it inline, outside of
 	 * the replication block.
 	 */
-	if ((ret = __db_fchk(env, "DB->remove", flags, DB_AUTO_COMMIT)) != 0)
+	if ((ret = __db_fchk(env, "DB->remove", flags,
+		DB_AUTO_COMMIT | DB_NOSYNC | DB_TXN_NOT_DURABLE)) != 0)
 		return (ret);
 
 	ENV_ENTER(env, ip);
@@ -70,16 +72,19 @@ __env_dbremove_pp(dbenv, txn, name, subdb, flags)
 		if ((ret = __db_txn_auto_init(env, ip, &txn)) != 0)
 			goto err;
 		txn_local = 1;
-	} else
-		if (txn != NULL && !TXN_ON(env) &&
-		    (!CDB_LOCKING(env) || !F_ISSET(txn, TXN_CDSGROUP))) {
-			ret = __db_not_txn_env(env);
-			goto err;
-		}
+	} else if (txn != NULL && !TXN_ON(env) &&
+	    (!CDB_LOCKING(env) || !F_ISSET(txn, TXN_FAMILY))) {
+		ret = __db_not_txn_env(env);
+		goto err;
+	}
 	LF_CLR(DB_AUTO_COMMIT);
 
 	if ((ret = __db_create_internal(&dbp, env, 0)) != 0)
 		goto err;
+	if (LF_ISSET(DB_TXN_NOT_DURABLE) &&
+	    (ret = __db_set_flags(dbp, DB_TXN_NOT_DURABLE)) != 0)
+		goto err;
+	LF_CLR(DB_TXN_NOT_DURABLE);
 
 	ret = __db_remove_int(dbp, ip, txn, name, subdb, flags);
 
@@ -91,7 +96,7 @@ __env_dbremove_pp(dbenv, txn, name, subdb, flags)
 		 */
 		LOCK_INIT(dbp->handle_lock);
 		dbp->locker = NULL;
-	} else if (txn != NULL) {
+	} else if (IS_REAL_TXN(txn)) {
 		/*
 		 * We created this handle locally so we need to close it
 		 * and clean it up.  Unfortunately, it's holding transactional
@@ -116,15 +121,9 @@ err:	if (txn_local && (t_ret =
 	 * closing the DB handle -- a DB handle cannot be closed before
 	 * resolving the txn.
 	 */
-	if (txn_local || txn == NULL) {
-		if (dbp != NULL &&
-		    (t_ret = __db_close(dbp, NULL, DB_NOSYNC)) != 0 && ret == 0)
-			ret = t_ret;
-	} else {
-		if (dbp != NULL && (t_ret =
-		     __txn_closeevent(env, txn, dbp)) != 0 && ret == 0)
-			ret = t_ret;
-	}
+	if (dbp != NULL &&
+	    (t_ret = __db_close(dbp, NULL, DB_NOSYNC)) != 0 && ret == 0)
+		ret = t_ret;
 
 	if (handle_check && (t_ret = __env_db_rep_exit(env)) != 0 && ret == 0)
 		ret = t_ret;
@@ -166,7 +165,7 @@ __db_remove_pp(dbp, name, subdb, flags)
 		return (__db_mi_open(env, "DB->remove", 1));
 
 	/* Validate arguments. */
-	if ((ret = __db_fchk(env, "DB->remove", flags, 0)) != 0)
+	if ((ret = __db_fchk(env, "DB->remove", flags, DB_NOSYNC)) != 0)
 		return (ret);
 
 	/* Check for consistent transaction usage. */
@@ -210,14 +209,8 @@ __db_remove(dbp, ip, txn, name, subdb, flags)
 
 	ret = __db_remove_int(dbp, ip, txn, name, subdb, flags);
 
-	if (txn == NULL) {
-		if ((t_ret = __db_close(dbp, txn, DB_NOSYNC)) != 0 && ret == 0)
-			ret = t_ret;
-	} else {
-		if ((t_ret =
-		     __txn_closeevent(dbp->env, txn, dbp)) != 0 && ret == 0)
-			ret = t_ret;
-	}
+	if ((t_ret = __db_close(dbp, txn, DB_NOSYNC)) != 0 && ret == 0)
+		ret = t_ret;
 
 	return (ret);
 }
@@ -254,13 +247,13 @@ __db_remove_int(dbp, ip, txn, name, subdb, flags)
 		MAKE_INMEM(dbp);
 		real_name = (char *)subdb;
 	} else if (subdb != NULL) {
-		ret = __db_subdb_remove(dbp, ip, txn, name, subdb);
+		ret = __db_subdb_remove(dbp, ip, txn, name, subdb, flags);
 		goto err;
 	}
 
 	/* Handle transactional file removes separately. */
 	if (IS_REAL_TXN(txn)) {
-		ret = __db_dbtxn_remove(dbp, txn, name, subdb);
+		ret = __db_dbtxn_remove(dbp, ip, txn, name, subdb);
 		goto err;
 	}
 
@@ -269,8 +262,8 @@ __db_remove_int(dbp, ip, txn, name, subdb, flags)
 	 *
 	 * Find the real name of the file.
 	 */
-	if (!F_ISSET(dbp, DB_AM_INMEM) && (ret =
-	    __db_appname(env, DB_APP_DATA, name, 0, NULL, &real_name)) != 0)
+	if (!F_ISSET(dbp, DB_AM_INMEM) && (ret = __db_appname(env,
+	    DB_APP_DATA, name, &dbp->dirname, &real_name)) != 0)
 		goto err;
 
 	/*
@@ -286,12 +279,13 @@ __db_remove_int(dbp, ip, txn, name, subdb, flags)
 		goto err;
 
 	if (dbp->db_am_remove != NULL &&
-	    (ret = dbp->db_am_remove(dbp, NULL, name, subdb)) != 0)
+	    (ret = dbp->db_am_remove(dbp, ip, NULL, name, subdb, flags)) != 0)
 		goto err;
 
 	ret = F_ISSET(dbp, DB_AM_INMEM) ?
 	    __db_inmem_remove(dbp, NULL, real_name) :
-	    __fop_remove(env, NULL, dbp->fileid, name, DB_APP_DATA,
+	    __fop_remove(env,
+	    NULL, dbp->fileid, name, &dbp->dirname, DB_APP_DATA,
 	    F_ISSET(dbp, DB_AM_NOT_DURABLE) ? DB_LOG_NOT_DURABLE : 0);
 
 err:	if (!F_ISSET(dbp, DB_AM_INMEM) && real_name != NULL)
@@ -327,7 +321,8 @@ __db_inmem_remove(dbp, txn, name)
 
 	/* This had better exist if we are trying to do a remove. */
 	(void)__memp_set_flags(dbp->mpf, DB_MPOOL_NOFILE, 1);
-	if ((ret = __memp_fopen(dbp->mpf, NULL, name, 0, 0, 0)) != 0)
+	if ((ret = __memp_fopen(dbp->mpf, NULL,
+	    name, &dbp->dirname, 0, 0, 0)) != 0)
 		return (ret);
 	if ((ret = __memp_get_fileid(dbp->mpf, dbp->fileid)) != 0)
 		return (ret);
@@ -337,6 +332,13 @@ __db_inmem_remove(dbp, txn, name)
 		if (dbp->locker == NULL &&
 		    (ret = __lock_id(env, NULL, &dbp->locker)) != 0)
 			return (ret);
+		if (!CDB_LOCKING(env) &&
+		    txn != NULL && F_ISSET(txn, TXN_INFAMILY)) {
+			if ((ret = __lock_addfamilylocker(env,
+			    txn->txnid, dbp->locker->id, 1)) != 0)
+				return (ret);
+			txn = NULL;
+		}
 		locker = txn == NULL ? dbp->locker : txn->locker;
 	}
 
@@ -351,20 +353,20 @@ __db_inmem_remove(dbp, txn, name)
 	    __fop_lock_handle(env, dbp, locker, DB_LOCK_WRITE, NULL, 0)) != 0)
 		return (ret);
 
-	if (LOGGING_ON(env)) {
+	if (!IS_REAL_TXN(txn))
+		ret = __memp_nameop(env, dbp->fileid, NULL, name, NULL, 1);
+	else if (LOGGING_ON(env)) {
 		if (txn != NULL && (ret =
 		    __txn_remevent(env, txn, name, dbp->fileid, 1)) != 0)
 			return (ret);
 
 		DB_INIT_DBT(name_dbt, name, strlen(name) + 1);
 		DB_INIT_DBT(fid_dbt, dbp->fileid, DB_FILE_ID_LEN);
-		if ((ret = __crdel_inmem_remove_log(
-		    env, txn, &lsn, 0, &name_dbt, &fid_dbt)) != 0)
-			return (ret);
+		ret = __crdel_inmem_remove_log(
+		    env, txn, &lsn, 0, &name_dbt, &fid_dbt);
 	}
 
-	return (!IS_REAL_TXN(txn) ?
-	    __memp_nameop(env, dbp->fileid, NULL, name, NULL, 1) : 0);
+	return (ret);
 }
 
 /*
@@ -372,11 +374,12 @@ __db_inmem_remove(dbp, txn, name)
  *	Remove a subdatabase.
  */
 static int
-__db_subdb_remove(dbp, ip, txn, name, subdb)
+__db_subdb_remove(dbp, ip, txn, name, subdb, flags)
 	DB *dbp;
 	DB_THREAD_INFO *ip;
 	DB_TXN *txn;
 	const char *name, *subdb;
+	u_int32_t flags;
 {
 	DB *mdbp, *sdbp;
 	int ret, t_ret;
@@ -385,6 +388,9 @@ __db_subdb_remove(dbp, ip, txn, name, subdb)
 
 	/* Open the subdatabase. */
 	if ((ret = __db_create_internal(&sdbp, dbp->env, 0)) != 0)
+		goto err;
+	if (F_ISSET(dbp, DB_AM_NOT_DURABLE) &&
+		(ret = __db_set_flags(sdbp, DB_TXN_NOT_DURABLE)) != 0)
 		goto err;
 	if ((ret = __db_open(sdbp, ip,
 	    txn, name, subdb, DB_UNKNOWN, DB_WRITEOPEN, 0, PGNO_BASE_MD)) != 0)
@@ -427,28 +433,21 @@ __db_subdb_remove(dbp, ip, txn, name, subdb)
 DB_TEST_RECOVERY_LABEL
 err:
 	/* Close the main and subdatabases. */
-	if (txn == NULL) {
-		if ((t_ret = __db_close(sdbp, txn, 0)) != 0 && ret == 0)
-			ret = t_ret;
+	if ((t_ret = __db_close(sdbp, txn, DB_NOSYNC)) != 0 && ret == 0)
+		ret = t_ret;
 
-		if (mdbp != NULL &&
-		    (t_ret = __db_close(mdbp, txn, DB_NOSYNC)) != 0 && ret == 0)
-			ret = t_ret;
-	} else {
-		if ((t_ret =
-		     __txn_closeevent(sdbp->env, txn, sdbp)) != 0 && ret == 0)
-			ret = t_ret;
-		if (mdbp != NULL && (t_ret =
-		     __txn_closeevent(mdbp->env, txn, mdbp)) != 0 && ret == 0)
-			ret = t_ret;
-	}
+	if (mdbp != NULL && (t_ret = __db_close(mdbp, txn,
+	    (LF_ISSET(DB_NOSYNC) || txn != NULL) ? DB_NOSYNC : 0)) != 0 &&
+	    ret == 0)
+		ret = t_ret;
 
 	return (ret);
 }
 
 static int
-__db_dbtxn_remove(dbp, txn, name, subdb)
+__db_dbtxn_remove(dbp, ip, txn, name, subdb)
 	DB *dbp;
+	DB_THREAD_INFO *ip;
 	DB_TXN *txn;
 	const char *name, *subdb;
 {
@@ -474,19 +473,20 @@ __db_dbtxn_remove(dbp, txn, name, subdb)
 	DB_TEST_RECOVERY(dbp, DB_TEST_PREDESTROY, ret, name);
 
 	if ((ret = __db_rename_int(dbp,
-	    txn->thread_info, txn, name, subdb, tmpname)) != 0)
+	    txn->thread_info, txn, name, subdb, tmpname, DB_NOSYNC)) != 0)
 		goto err;
 
 	/*
 	 * The internal removes will also translate into delayed removes.
 	 */
 	if (dbp->db_am_remove != NULL &&
-	    (ret = dbp->db_am_remove(dbp, txn, tmpname, NULL)) != 0)
+	    (ret = dbp->db_am_remove(dbp, ip, txn, tmpname, NULL, 0)) != 0)
 		goto err;
 
 	ret = F_ISSET(dbp, DB_AM_INMEM) ?
 	     __db_inmem_remove(dbp, txn, tmpname) :
-	    __fop_remove(env, txn, dbp->fileid, tmpname, DB_APP_DATA,
+	    __fop_remove(env,
+	    txn, dbp->fileid, tmpname, &dbp->dirname, DB_APP_DATA,
 	    F_ISSET(dbp, DB_AM_NOT_DURABLE) ? DB_LOG_NOT_DURABLE : 0);
 
 	DB_TEST_RECOVERY(dbp, DB_TEST_POSTDESTROY, ret, name);

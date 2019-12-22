@@ -4,7 +4,7 @@
  *
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 
 package com.sleepycat.db;
@@ -53,21 +53,21 @@ public class MutexStats {
         return st_mutex_inuse_max;
     }
 
-    private int st_region_wait;
+    private long st_region_wait;
     /**
     The number of times that a thread of control was forced to wait before
     obtaining the mutex region mutex.
     **/
-    public int getRegionWait() {
+    public long getRegionWait() {
         return st_region_wait;
     }
 
-    private int st_region_nowait;
+    private long st_region_nowait;
     /**
     The number of times that a thread of control was able to obtain
     the mutex region mutex without waiting.
     **/
-    public int getRegionNowait() {
+    public long getRegionNowait() {
         return st_region_nowait;
     }
 

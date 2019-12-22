@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2000,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2000, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: db_cds.c,v 12.14 2008/01/08 20:58:10 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -154,7 +154,7 @@ __cdsgroup_begin(dbenv, txnpp)
 	if ((ret = __lock_id(env, &txn->txnid, &txn->locker)) != 0)
 		goto err;
 
-	txn->flags = TXN_CDSGROUP;
+	txn->flags = TXN_FAMILY;
 	txn->abort = __cdsgroup_abort;
 	txn->commit = __cdsgroup_commit;
 	txn->discard = __cdsgroup_discard;

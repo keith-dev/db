@@ -18,11 +18,11 @@
 		(*jenv)->SetLongField(jenv, jobj, fid,			\
 		    (jlong)statp->name)
 
-#define JAVADB_STAT_XID(jenv, jobj, fid, statp, name) {			\
+#define JAVADB_STAT_GID(jenv, jobj, fid, statp, name) {			\
 	jobject jarr =							\
-	    (*jenv)->NewByteArray(jenv, (jsize)DB_XIDDATASIZE);		\
+	    (*jenv)->NewByteArray(jenv, (jsize)DB_GID_SIZE);		\
 	(*jenv)->SetByteArrayRegion(jenv, jarr,				\
-	    0, (jsize)DB_XIDDATASIZE, (jbyte *)statp->name);		\
+	    0, (jsize)DB_GID_SIZE, (jbyte *)statp->name);		\
 	(*jenv)->SetObjectField(jenv, jobj, fid, jarr);			\
 	}
 
@@ -128,10 +128,10 @@ JAVA_TYPEMAP(DB_TXN_STAT *, com.sleepycat.db.TransactionStats, jobject)
 	else {
 		DB *db = (DB *)arg1;
 		DBTYPE dbtype;
-		int err;
+		int ret;
 
-		if ((err = db->get_type(db, &dbtype)) != 0) {
-			__dbj_throw(jenv, err, NULL, NULL, DB2JDBENV);
+		if ((ret = db->get_type(db, &dbtype)) != 0) {
+			__dbj_throw(jenv, ret, NULL, NULL, DB2JDBENV);
 			return $null;
 		}
 

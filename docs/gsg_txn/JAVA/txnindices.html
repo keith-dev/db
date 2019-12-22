@@ -5,10 +5,10 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <title>Secondary Indices with Transaction Applications</title>
     <link rel="stylesheet" href="gettingStarted.css" type="text/css" />
-    <meta name="generator" content="DocBook XSL Stylesheets V1.62.4" />
-    <link rel="home" href="index.html" title="Getting Started with Berkeley DB Transaction Processing" />
+    <meta name="generator" content="DocBook XSL Stylesheets V1.73.2" />
+    <link rel="start" href="index.html" title="Getting Started with Berkeley DB Transaction Processing" />
     <link rel="up" href="usingtxns.html" title="Chapter 3. Transaction Basics" />
-    <link rel="previous" href="txncursor.html" title="Transactional Cursors" />
+    <link rel="prev" href="txncursor.html" title="Transactional Cursors" />
     <link rel="next" href="maxtxns.html" title="Configuring the Transaction Subsystem" />
   </head>
   <body>
@@ -32,15 +32,9 @@
             <h2 class="title" style="clear: both"><a id="txnindices"></a>Secondary Indices with Transaction Applications</h2>
           </div>
         </div>
-        <div></div>
       </div>
       <p>
-            
-            <span>
-                If you are using the base API, then you
-            </span>
-
-                can use transactions with your secondary indices so long as you
+            You can use transactions with your secondary indices so long as you
 
             
 
@@ -62,7 +56,7 @@
                     closed before the handle is either either committed or
                     aborted.
                 </span>
-                    See <a href="txncursor.html">Transactional Cursors</a> for details.
+                    See <a class="xref" href="txncursor.html" title="Transactional Cursors">Transactional Cursors</a> for details.
         </p>
       <p>
             Note that when you use transactions to protect your database writes, your secondary indices are protected from
@@ -74,17 +68,17 @@
                             If you are using the DPL, then be aware that
                             you never have to provide a transactional
                             handle when opening an index, be it a primary
-                            or a secondary. However, transactions are
+                            or a secondary. However, if transactions are
                             enabled for your store, then all of the indexes
                             that you open will be enabled for transactional
-                            usage. More, any write operation performed
+                            usage. Moreover, any write operation performed
                             using that index will be done using a
                             transaction, regardless of whether you
-                            explictly provide a transactional handle to the
+                            explicitly provide a transactional handle to the
                             write operation.
                     </p>
         <p>
-                            If you do not explictly provide a transaction
+                            If you do not explicitly provide a transaction
                             handle to DPL write operations performed on a
                             transactional store, then auto commit is
                             silently used for that operation.
@@ -125,7 +119,8 @@ try {
 
     // Open the secondary. FullNameKeyCreator is not actually implemented
     // anywhere. See the Getting Started Guide for details.
-    FullNameKeyCreator keyCreator = new FullNameKeyCreator(myTupleBinding);
+    FullNameKeyCreator keyCreator = 
+        new FullNameKeyCreator(myTupleBinding);
 
     // Set the key creator on the secondary config object.
     mySecConfig.setKeyCreator(keyCreator);
@@ -135,7 +130,8 @@ try {
     //      - myEnv is the environment handle.
     //      - myDb is the primary database handle.
     String secDbName = "mySecondaryDatabase";
-    mySecDb = myEnv.openSecondary(null, secDbName, null, myDb, mySecConfig);
+    mySecDb = myEnv.openSecondary(null, secDbName, null, myDb, 
+                                  mySecConfig);
 } catch (DatabaseException de) {
     // Exception handling goes here ...
 } catch (FileNotFoundException fnfe) {

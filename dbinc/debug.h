@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1998,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1998, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: debug.h,v 12.19 2008/01/29 01:41:10 bostic Exp $
+ * $Id$
  */
 
 #ifndef _DB_DEBUG_H_
@@ -125,7 +125,7 @@ typedef enum {
 	    (dbenv)->db_errfile != NULL ||				\
 	    ((dbenv)->db_errcall == NULL &&				\
 	    ((app_call) || F_ISSET((dbenv)->env, ENV_NO_OUTPUT_SET))))	\
-		 __db_errfile(env, error, error_set, fmt, __ap); 	\
+		 __db_errfile(env, error, error_set, fmt, __ap);	\
 	va_end(__ap);							\
 }
 #endif
@@ -195,7 +195,7 @@ typedef enum {
 	if (DBC_LOGGING((C))) {						\
 		memset(&__op, 0, sizeof(__op));				\
 		__op.data = O;						\
-		__op.size = strlen(O) + 1;				\
+		__op.size = (u_int32_t)strlen(O) + 1;			\
 		(void)__db_debug_log((C)->env, T, &__lsn, 0,		\
 		    &__op, (C)->dbp->log_filename->id, K, A, F);	\
 	}								\
@@ -260,6 +260,11 @@ typedef enum {
 
 #define	DB_TEST_RECOVERY_LABEL	db_tr_err:
 
+#define	DB_TEST_SET(field, val) do {					\
+	if (field == (val))						\
+		goto db_tr_err;						\
+} while (0)
+
 #define	DB_TEST_WAIT(env, val)						\
 	if ((val) != 0)							\
 		__os_yield((env), (u_long)(val), 0)
@@ -268,6 +273,7 @@ typedef enum {
 #define	DB_ENV_TEST_RECOVERY(env, val, ret, name)
 #define	DB_TEST_RECOVERY(dbp, val, ret, name)
 #define	DB_TEST_RECOVERY_LABEL
+#define	DB_TEST_SET(env, val)
 #define	DB_TEST_WAIT(env, val)
 #endif
 

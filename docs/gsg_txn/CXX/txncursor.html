@@ -5,10 +5,10 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <title>Transactional Cursors</title>
     <link rel="stylesheet" href="gettingStarted.css" type="text/css" />
-    <meta name="generator" content="DocBook XSL Stylesheets V1.62.4" />
-    <link rel="home" href="index.html" title="Getting Started with Berkeley DB Transaction Processing" />
+    <meta name="generator" content="DocBook XSL Stylesheets V1.73.2" />
+    <link rel="start" href="index.html" title="Getting Started with Berkeley DB Transaction Processing" />
     <link rel="up" href="usingtxns.html" title="Chapter 3. Transaction Basics" />
-    <link rel="previous" href="nestedtxn.html" title="Nested Transactions" />
+    <link rel="prev" href="nestedtxn.html" title="Nested Transactions" />
     <link rel="next" href="txnindices.html" title="Secondary Indices with Transaction Applications" />
   </head>
   <body>
@@ -32,7 +32,6 @@
             <h2 class="title" style="clear: both"><a id="txncursor"></a>Transactional Cursors</h2>
           </div>
         </div>
-        <div></div>
       </div>
       <p>
             You can transaction-protect your cursor operations by
@@ -48,7 +47,7 @@
       <pre class="programlisting">#include "db_cxx.h"
 
 ...
-                                                                                                                                  
+
 int main(void)
 {
     // Environment and database opens omitted
@@ -68,15 +67,17 @@ int main(void)
         DbTxn *txn = NULL;
         myEnv.txn_begin(NULL, &amp;txn, 0);
         try {
-            // Get our cursor. Note that we pass the transaction handle here.
+            // Get our cursor. Note that we pass the transaction handle 
+            // here.
             db.cursor(txn, &amp;cursorp, 0); 
 
-            // Perform our operations. Note that we do not pass a transaction
-            // handle here.
+            // Perform our operations. Note that we do not pass a 
+            // transaction handle here.
             char *replacementString = "new string";
             while (cursor-&gt;get(&amp;key, &amp;data, DB_NEXT) == 0) {
                 data.set_data(void *)replacementString);
-                data.set_size((strlen(replacementString) + 1) * sizeof(char));
+                data.set_size((strlen(replacementString) + 1) * 
+                    sizeof(char));
                 cursor-&gt;put(&amp;key, &amp;data, DB_CURRENT);
             }
 

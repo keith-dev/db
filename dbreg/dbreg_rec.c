@@ -1,7 +1,7 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 /*
  * Copyright (c) 1995, 1996
@@ -31,7 +31,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $Id: dbreg_rec.c,v 12.26 2008/01/08 20:58:19 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -39,12 +39,10 @@
 #include "db_int.h"
 #include "dbinc/db_page.h"
 #include "dbinc/db_am.h"
-#include "dbinc/log.h"
 #include "dbinc/txn.h"
 
 static int __dbreg_open_file __P((ENV *,
     DB_TXN *, __dbreg_register_args *, void *));
-
 /*
  * PUBLIC: int __dbreg_register_recover
  * PUBLIC:     __P((ENV *, DBT *, DB_LSN *, db_recops, void *));
@@ -61,7 +59,7 @@ __dbreg_register_recover(env, dbtp, lsnp, op, info)
 	DB_ENTRY *dbe;
 	DB_LOG *dblp;
 	DB *dbp;
-	u_int32_t status;
+	u_int32_t opcode, status;
 	int do_close, do_open, do_rem, ret, t_ret;
 
 	dblp = env->lg_handle;
@@ -74,7 +72,8 @@ __dbreg_register_recover(env, dbtp, lsnp, op, info)
 	if ((ret = __dbreg_register_read(env, dbtp->data, &argp)) != 0)
 		goto out;
 
-	switch (argp->opcode) {
+	opcode = FLD_ISSET(argp->opcode, DBREG_OP_MASK);
+	switch (opcode) {
 	case DBREG_REOPEN:
 	case DBREG_PREOPEN:
 	case DBREG_OPEN:
@@ -87,7 +86,7 @@ __dbreg_register_recover(env, dbtp, lsnp, op, info)
 		if ((DB_REDO(op) ||
 		    op == DB_TXN_OPENFILES || op == DB_TXN_POPENFILES))
 			do_open = 1;
-		else if (argp->opcode != DBREG_REOPEN)
+		else if (opcode != DBREG_REOPEN)
 			do_close = 1;
 		break;
 	case DBREG_CLOSE:
@@ -125,7 +124,7 @@ __dbreg_register_recover(env, dbtp, lsnp, op, info)
 		 * We must open the db even if the meta page is not
 		 * yet written as we may be creating subdatabase.
 		 */
-		if (op == DB_TXN_OPENFILES && argp->opcode != DBREG_CHKPNT)
+		if (op == DB_TXN_OPENFILES && opcode != DBREG_CHKPNT)
 			F_SET(dblp, DBLOG_FORCE_OPEN);
 
 		/*
@@ -146,8 +145,7 @@ __dbreg_register_recover(env, dbtp, lsnp, op, info)
 			 * set and probably shouldn't, so we need to check
 			 * for that case and possibly retry.
 			 */
-			if (op == DB_TXN_FORWARD_ROLL &&
-			    argp->txnp != 0 &&
+			if (DB_REDO(op) && argp->txnp != 0 &&
 			    dblp->dbentry[argp->fileid].deleted) {
 				dblp->dbentry[argp->fileid].deleted = 0;
 				ret =
@@ -201,15 +199,7 @@ __dbreg_register_recover(env, dbtp, lsnp, op, info)
 			 */
 			dbe = &dblp->dbentry[argp->fileid];
 			if (dbe->dbp == NULL && !dbe->deleted) {
-				/* No valid entry here. */
-				if ((DB_REDO(op) &&
-				    argp->opcode != DBREG_RCLOSE) ||
-				    argp->opcode == DBREG_CHKPNT) {
-					__db_errx(env,
-				    "Warning: Improper file close at %lu/%lu",
-					    (u_long)lsnp->file,
-					    (u_long)lsnp->offset);
-				}
+				/* No valid entry here. Nothing to do. */
 				MUTEX_UNLOCK(env, dblp->mtx_dbreg);
 				goto done;
 			}
@@ -300,10 +290,11 @@ __dbreg_open_file(env, txn, argp, info)
 	DB *dbp;
 	DB_ENTRY *dbe;
 	DB_LOG *dblp;
-	u_int32_t id, status;
+	u_int32_t id, opcode, status;
 	int ret;
 
 	dblp = env->lg_handle;
+	opcode = FLD_ISSET(argp->opcode, DBREG_OP_MASK);
 
 	/*
 	 * When we're opening, we have to check that the name we are opening
@@ -334,9 +325,13 @@ __dbreg_open_file(env, txn, argp, info)
 		 * file uid of the current file does not match that of the
 		 * previously opened file, 3) the current file is unnamed, in
 		 * which case it should never be opened during recovery.
+		 * It is also possible that the db open previously failed
+		 * because the file was missing.  Check the DB_AM_OPEN_CALLED
+		 * bit and try to open it again.
 		 */
 		if ((dbp = dbe->dbp) != NULL) {
-			if (argp->opcode == DBREG_REOPEN ||
+			if (opcode == DBREG_REOPEN ||
+			    !F_ISSET(dbp, DB_AM_OPEN_CALLED) ||
 			    dbp->meta_pgno != argp->meta_pgno ||
 			    argp->name.size == 0 ||
 			    memcmp(dbp->fileid, argp->uid.data,
@@ -349,11 +344,6 @@ __dbreg_open_file(env, txn, argp, info)
 				goto reopen;
 			}
 
-			/*
-			 * We should only get here if we already have the
-			 * dbp from an openfiles pass, in which case, what's
-			 * here had better be the same dbp.
-			 */
 			DB_ASSERT(env, dbe->dbp == dbp);
 			MUTEX_UNLOCK(env, dblp->mtx_dbreg);
 
@@ -362,7 +352,7 @@ __dbreg_open_file(env, txn, argp, info)
 			 * in the txnlist so that we know how to handle the
 			 * subtransaction that created the file system object.
 			 */
-			if (argp->id != TXN_INVALID &&
+			if (argp != NULL && argp->id != TXN_INVALID &&
 			    (ret = __db_txnlist_update(env, info,
 			    argp->id, TXN_EXPECTED, NULL, &status, 1)) != 0)
 				return (ret);
@@ -398,5 +388,5 @@ reopen:
 
 	return (__dbreg_do_open(env,
 	    txn, dblp, argp->uid.data, argp->name.data, argp->ftype,
-	    argp->fileid, argp->meta_pgno, info, argp->id, argp->opcode));
+	    argp->fileid, argp->meta_pgno, info, argp->id, opcode));
 }

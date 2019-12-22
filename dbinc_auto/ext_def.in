@@ -28,6 +28,7 @@
 #define	db_env_set_func_yield db_env_set_func_yield@DB_VERSION_UNIQUE_NAME@
 #define	db_env_create db_env_create@DB_VERSION_UNIQUE_NAME@
 #define	db_version db_version@DB_VERSION_UNIQUE_NAME@
+#define	db_full_version db_full_version@DB_VERSION_UNIQUE_NAME@
 #define	log_compare log_compare@DB_VERSION_UNIQUE_NAME@
 #define	db_sequence_create db_sequence_create@DB_VERSION_UNIQUE_NAME@
 #if DB_DBM_HSEARCH != 0
@@ -56,6 +57,5 @@
 #define	__db_hsearch __db_hsearch@DB_VERSION_UNIQUE_NAME@
 #define	__db_hdestroy __db_hdestroy@DB_VERSION_UNIQUE_NAME@
 #endif
-#define	db_xa_switch db_xa_switch@DB_VERSION_UNIQUE_NAME@
 
 #endif /* !_DB_EXT_DEF_IN_ */

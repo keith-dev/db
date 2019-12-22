@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2004,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2004, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: sequence.c,v 12.54 2008/05/05 20:25:09 mbrey Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -187,7 +187,11 @@ __seq_open_pp(seq, txn, keyp, flags)
 	if ((ret = __db_get_flags(dbp, &tflags)) != 0)
 		goto err;
 
-	if (DB_IS_READONLY(dbp)) {
+	/*
+	 * We can let replication clients open sequences, but must
+	 * check later that they do not update them.
+	 */
+	if (F_ISSET(dbp, DB_AM_RDONLY)) {
 		ret = __db_rdonly(dbp->env, "DB_SEQUENCE->open");
 		goto err;
 	}
@@ -244,6 +248,11 @@ retry:	if ((ret = __db_get(dbp, ip,
 		if ((ret != DB_NOTFOUND && ret != DB_KEYEMPTY) ||
 		    !LF_ISSET(DB_CREATE))
 			goto err;
+		if (IS_REP_CLIENT(env) &&
+		    !F_ISSET(dbp, DB_AM_NOT_DURABLE)) {
+			ret = __db_rdonly(env, "DB_SEQUENCE->open");
+			goto err;
+		}
 		ret = 0;
 
 		rp = &seq->seq_record;
@@ -296,7 +305,12 @@ retry:	if ((ret = __db_get(dbp, ip,
 	 */
 	rp = seq->seq_data.data;
 	if (rp->seq_version == DB_SEQUENCE_OLDVER) {
-oldver:		rp->seq_version = DB_SEQUENCE_VERSION;
+oldver:		if (IS_REP_CLIENT(env) &&
+		    !F_ISSET(dbp, DB_AM_NOT_DURABLE)) {
+			ret = __db_rdonly(env, "DB_SEQUENCE->open");
+			goto err;
+		}
+		rp->seq_version = DB_SEQUENCE_VERSION;
 		if (!F_ISSET(env, ENV_LITTLEENDIAN)) {
 			if (IS_DB_AUTO_COMMIT(dbp, txn)) {
 				if ((ret =
@@ -547,13 +561,16 @@ __seq_update(seq, ip, txn, delta, flags)
 	u_int32_t flags;
 {
 	DB *dbp;
+	DBT *data, ldata;
 	DB_SEQ_RECORD *rp;
 	ENV *env;
 	int32_t adjust;
-	int ret, txn_local;
+	int ret, txn_local, need_mutex;
 
 	dbp = seq->seq_dbp;
 	env = dbp->env;
+	need_mutex = 0;
+	data = &seq->seq_data;
 
 	/*
 	 * Create a local transaction as necessary, check for consistent
@@ -561,7 +578,7 @@ __seq_update(seq, ip, txn, delta, flags)
 	 * locking on, acquire a locker id for the handle lock acquisition.
 	 */
 	if (IS_DB_AUTO_COMMIT(dbp, txn)) {
-		if ((ret = __txn_begin(env, ip, NULL, &txn, 0)) != 0)
+		if ((ret = __txn_begin(env, ip, NULL, &txn, flags)) != 0)
 			return (ret);
 		txn_local = 1;
 	} else
@@ -570,18 +587,55 @@ __seq_update(seq, ip, txn, delta, flags)
 	/* Check for consistent transaction usage. */
 	if ((ret = __db_check_txn(dbp, txn, DB_LOCK_INVALIDID, 0)) != 0)
 		goto err;
+	/*
+	 * If we are in a global transaction avoid deadlocking on the mutex.
+	 * The write lock on the data will prevent two updaters getting in
+	 * at once.  Fetch the data then see if things are what we thought
+	 * they were.
+	 */
+	if (txn_local == 0 && txn != NULL) {
+		MUTEX_UNLOCK(env, seq->mtx_seq);
+		need_mutex = 1;
+		data = &ldata;
+		data->data = NULL;
+		data->flags = DB_DBT_REALLOC;
+	}
 
 retry:	if ((ret = __db_get(dbp, ip,
-	    txn, &seq->seq_key, &seq->seq_data, 0)) != 0) {
+	    txn, &seq->seq_key, data, DB_RMW)) != 0) {
 		if (ret == DB_BUFFER_SMALL &&
 		    seq->seq_data.size > sizeof(seq->seq_record)) {
-			seq->seq_data.flags = DB_DBT_REALLOC;
-			seq->seq_data.data = NULL;
+			data->flags = DB_DBT_REALLOC;
+			data->data = NULL;
 			goto retry;
 		}
 		goto err;
 	}
 
+	if (data->size < sizeof(seq->seq_record)) {
+		__db_errx(env, "Bad sequence record format");
+		ret = EINVAL;
+		goto err;
+	}
+
+	/* We have an exclusive lock on the data, see if we raced. */
+	if (need_mutex) {
+		MUTEX_LOCK(env, seq->mtx_seq);
+		need_mutex = 0;
+		rp = seq->seq_rp;
+		/*
+		 * Note that caching must be off if we have global
+		 * transaction so the value we fetch from the database
+		 * is the correct current value.
+		 */
+		if (data->size <= seq->seq_data.size) {
+			memcpy(seq->seq_data.data, data->data, data->size);
+			__os_ufree(env, data->data);
+		} else {
+			seq->seq_data.data = data->data;
+			seq->seq_data.size = data->size;
+		}
+	}
 	if (F_ISSET(env, ENV_LITTLEENDIAN))
 		seq->seq_rp = seq->seq_data.data;
 	SEQ_SWAP_IN(env, seq);
@@ -589,12 +643,6 @@ retry:	if ((ret = __db_get(dbp, ip,
 
 	if (F_ISSET(rp, DB_SEQ_WRAPPED))
 		goto overflow;
-
-	if (seq->seq_data.size < sizeof(seq->seq_record)) {
-		__db_errx(env, "Bad sequence record format");
-		ret = EINVAL;
-		goto err;
-	}
 
 	adjust = delta > seq->seq_cache_size ? delta : seq->seq_cache_size;
 
@@ -661,7 +709,12 @@ overflow:			__db_errx(env, "Sequence overflow");
 	else
 		seq->seq_last_value++;
 
-err:	return (txn_local ? __db_txn_auto_resolve(
+err:	if (need_mutex) {
+		if (data->data != NULL)
+			__os_ufree(env, data->data);
+		MUTEX_LOCK(env, seq->mtx_seq);
+	}
+	return (txn_local ? __db_txn_auto_resolve(
 	    env, txn, LF_ISSET(DB_TXN_NOSYNC), ret) : ret);
 }
 
@@ -706,6 +759,12 @@ __seq_get(seq, txn, delta, retp, flags)
 		return (ret);
 
 	MUTEX_LOCK(env, seq->mtx_seq);
+
+	if (handle_check && IS_REP_CLIENT(env) &&
+	    !F_ISSET(dbp, DB_AM_NOT_DURABLE)) {
+		ret = __db_rdonly(env, "DB_SEQUENCE->get");
+		goto err;
+	}
 
 	if (rp->seq_min + delta > rp->seq_max) {
 		__db_errx(env, "Sequence overflow");
@@ -832,6 +891,15 @@ __seq_remove(seq, txn, flags)
 	txn_local = 0;
 
 	SEQ_ILLEGAL_BEFORE_OPEN(seq, "DB_SEQUENCE->remove");
+
+	/*
+	 * Flags can only be 0, unless the database has DB_AUTO_COMMIT enabled.
+	 * Then DB_TXN_NOSYNC is allowed.
+	 */
+	if (flags != 0 &&
+	    (flags != DB_TXN_NOSYNC || !IS_DB_AUTO_COMMIT(dbp, txn)))
+		return (__db_ferr(env, "DB_SEQUENCE->remove illegal flag", 0));
+
 	ENV_ENTER(env, ip);
 
 	/* Check for replication block. */
@@ -841,10 +909,6 @@ __seq_remove(seq, txn, flags)
 		handle_check = 0;
 		goto err;
 	}
-	if (flags != 0) {
-		ret = __db_ferr(env, "DB_SEQUENCE->remove", 0);
-		goto err;
-	}
 
 	/*
 	 * Create a local transaction as necessary, check for consistent
@@ -852,7 +916,7 @@ __seq_remove(seq, txn, flags)
 	 * locking on, acquire a locker id for the handle lock acquisition.
 	 */
 	if (IS_DB_AUTO_COMMIT(dbp, txn)) {
-		if ((ret = __txn_begin(env, ip, NULL, &txn, 0)) != 0)
+		if ((ret = __txn_begin(env, ip, NULL, &txn, flags)) != 0)
 			return (ret);
 		txn_local = 1;
 	}

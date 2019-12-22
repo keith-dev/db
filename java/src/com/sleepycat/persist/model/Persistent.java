@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: Persistent.java,v 1.1 2008/02/07 17:12:28 mark Exp $
+ * $Id$
  */
 
 package com.sleepycat.persist.model;
@@ -17,7 +17,7 @@ import java.lang.annotation.Target;
 
 /**
  * Identifies a persistent class that is not an {@link Entity} class or a
- * {@link <a href="Entity.html#simpleTypes">simple type</a>}.
+ * {@link <a href="{@docRoot}/com/sleepycat/persist/model/Entity.html#simpleTypes">simple type</a>}.
  *
  * @author Mark Hayes
  */

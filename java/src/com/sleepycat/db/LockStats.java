@@ -4,7 +4,7 @@
  *
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 
 package com.sleepycat.db;
@@ -25,6 +25,9 @@ public class LockStats {
     }
 
     private int st_cur_maxid;
+    /**
+    The current maximum unused locker ID.
+    */
     public int getCurMaxId() {
         return st_cur_maxid;
     }
@@ -101,19 +104,19 @@ public class LockStats {
         return st_maxhlocks;
     }
 
-    private int st_locksteals;
+    private long st_locksteals;
     /** 
-    The maximum number of locks stolen for an empty partition. 
+    The maximum number of locks stolen by an empty partition. 
     */
-    public int getLocksteals() {
+    public long getLocksteals() {
         return st_locksteals;
     }
 
-    private int st_maxlsteals;
+    private long st_maxlsteals;
     /**
     The maximum number of lock steals for any one partition. 
     */
-    public int getMaxLsteals() {
+    public long getMaxLsteals() {
         return st_maxlsteals;
     }
 
@@ -149,73 +152,73 @@ public class LockStats {
         return st_maxhobjects;
     }
 
-    private int st_objectsteals;
+    private long st_objectsteals;
     /**
-    The maximum number of objects stolen for an empty partition.
+    The maximum number of objects stolen by an empty partition.
     */
-    public int getObjectsteals() {
+    public long getObjectsteals() {
         return st_objectsteals;
     }
 
-    private int st_maxosteals;
+    private long st_maxosteals;
     /**
     The maximum number of object steals for any one partition.
     */
-    public int getMaxOsteals() {
+    public long getMaxOsteals() {
         return st_maxosteals;
     }
 
-    private int st_nrequests;
+    private long st_nrequests;
     /**
     The total number of locks requested.
     */
-    public int getNumRequests() {
+    public long getNumRequests() {
         return st_nrequests;
     }
 
-    private int st_nreleases;
+    private long st_nreleases;
     /**
     The total number of locks released.
     */
-    public int getNumReleases() {
+    public long getNumReleases() {
         return st_nreleases;
     }
 
-    private int st_nupgrade;
+    private long st_nupgrade;
     /** The total number of locks upgraded. **/
-    public int getNumUpgrade() {
+    public long getNumUpgrade() {
         return st_nupgrade;
     }
 
-    private int st_ndowngrade;
+    private long st_ndowngrade;
     /** The total number of locks downgraded. **/
-    public int getNumDowngrade() {
+    public long getNumDowngrade() {
         return st_ndowngrade;
     }
 
-    private int st_lock_wait;
+    private long st_lock_wait;
     /**
     The number of lock requests not immediately available due to conflicts,
     for which the thread of control waited.
     */
-    public int getLockWait() {
+    public long getLockWait() {
         return st_lock_wait;
     }
 
-    private int st_lock_nowait;
+    private long st_lock_nowait;
     /**
     The number of lock requests not immediately available due to conflicts,
     for which the thread of control did not wait.
     */
-    public int getLockNowait() {
+    public long getLockNowait() {
         return st_lock_nowait;
     }
 
-    private int st_ndeadlocks;
+    private long st_ndeadlocks;
     /**
     The number of deadlocks.
     */
-    public int getNumDeadlocks() {
+    public long getNumDeadlocks() {
         return st_ndeadlocks;
     }
 
@@ -227,11 +230,11 @@ public class LockStats {
         return st_locktimeout;
     }
 
-    private int st_nlocktimeouts;
+    private long st_nlocktimeouts;
     /**
     The number of lock requests that have timed out.
     */
-    public int getNumLockTimeouts() {
+    public long getNumLockTimeouts() {
         return st_nlocktimeouts;
     }
 
@@ -243,102 +246,102 @@ public class LockStats {
         return st_txntimeout;
     }
 
-    private int st_ntxntimeouts;
+    private long st_ntxntimeouts;
     /**
     The number of transactions that have timed out.  This value is also
     a component of st_ndeadlocks, the total number of deadlocks detected.
     */
-    public int getNumTxnTimeouts() {
+    public long getNumTxnTimeouts() {
         return st_ntxntimeouts;
     }
 
-    private int st_part_wait;
+    private long st_part_wait;
     /** 
      The number of times that a thread of control was forced to wait before 
      obtaining a lock partition mutex.
      * */
-    public int getPartWait() {
+    public long getPartWait() {
         return st_part_wait;
     }
 
-    private int st_part_nowait;
+    private long st_part_nowait;
     /** 
      The number of times that a thread of control was able to obtain a lock 
      partition mutex without waiting.
      * */
-    public int getPartNowait() {
+    public long getPartNowait() {
         return st_part_nowait;
     }
 
-    private int st_part_max_wait;
+    private long st_part_max_wait;
     /** 
      The maximum number of times that a thread of control was forced to wait 
      before obtaining any one lock partition mutex.
      * */
-    public int getPartMaxWait() {
+    public long getPartMaxWait() {
         return st_part_max_wait;
     }
 
-    private int st_part_max_nowait;
+    private long st_part_max_nowait;
     /** 
      The number of times that a thread of control was able to obtain any one 
      lock partition mutex without waiting.
      * */
-    public int getPartMaxNowait() {
+    public long getPartMaxNowait() {
         return st_part_max_nowait;
     }
 
-    private int st_objs_wait;
+    private long st_objs_wait;
     /**
     The number of requests to allocate or deallocate an object for which the
     thread of control waited.
     */
-    public int getObjsWait() {
+    public long getObjsWait() {
         return st_objs_wait;
     }
 
-    private int st_objs_nowait;
+    private long st_objs_nowait;
     /**
     The number of requests to allocate or deallocate an object for which the
     thread of control did not wait.
     */
-    public int getObjsNowait() {
+    public long getObjsNowait() {
         return st_objs_nowait;
     }
 
-    private int st_lockers_wait;
+    private long st_lockers_wait;
     /**
     The number of requests to allocate or deallocate a locker for which the
     thread of control waited.
     */
-    public int getLockersWait() {
+    public long getLockersWait() {
         return st_lockers_wait;
     }
 
-    private int st_lockers_nowait;
+    private long st_lockers_nowait;
     /**
     The number of requests to allocate or deallocate a locker for which the
     thread of control did not wait.
     */
-    public int getLockersNowait() {
+    public long getLockersNowait() {
         return st_lockers_nowait;
     }
 
-    private int st_region_wait;
+    private long st_region_wait;
     /**
     The number of times that a thread of control was forced to wait
     before obtaining the region lock.
     */
-    public int getRegionWait() {
+    public long getRegionWait() {
         return st_region_wait;
     }
 
-    private int st_region_nowait;
+    private long st_region_nowait;
     /**
     The number of times that a thread of control was able to obtain the
     region lock without waiting.
     */
-    public int getRegionNowait() {
+    public long getRegionNowait() {
         return st_region_nowait;
     }
 

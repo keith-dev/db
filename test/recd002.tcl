@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 1996,2008 Oracle.  All rights reserved.
+# Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: recd002.tcl,v 12.10 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	recd002
 # TEST	Split recovery tests.  For every known split log message, makes sure
@@ -41,7 +41,7 @@ proc recd002 { method {select 0} args} {
 	env_cleanup $testdir
 	set testfile recd002.db
 	set testfile2 recd002-2.db
-	set eflags "-create -txn -lock_max_locks 2000 -home $testdir $envargs"
+	set eflags "-create -txn wrnosync -lock_max_locks 2000 -home $testdir $envargs"
 
 	puts "\tRecd002.a: creating environment"
 	set env_cmd "berkdb_env $eflags"
@@ -50,13 +50,13 @@ proc recd002 { method {select 0} args} {
 
 	# Create the databases. We will use a small page size so that splits
 	# happen fairly quickly.
-	set oflags "-create $args $omethod -mode 0644 -env $dbenv\
+	set oflags "-create -auto_commit $args $omethod -mode 0644 -env $dbenv\
 	    -pagesize $pagesize $testfile"
 	set db [eval {berkdb_open} $oflags]
 	error_check_bad db_open $db NULL
 	error_check_good db_open [is_substr $db db] 1
 	error_check_good db_close [$db close] 0
-	set oflags "-create $args $omethod -mode 0644 -env $dbenv\
+	set oflags "-create -auto_commit $args $omethod -mode 0644 -env $dbenv\
 	    -pagesize $pagesize $testfile2"
 	set db [eval {berkdb_open} $oflags]
 	error_check_bad db_open $db NULL
@@ -85,18 +85,18 @@ proc recd002 { method {select 0} args} {
 				continue
 			}
 		}
-		op_recover abort $testdir $env_cmd $testfile $cmd $msg
-		op_recover commit $testdir $env_cmd $testfile $cmd $msg
+		op_recover abort $testdir $env_cmd $testfile $cmd $msg $args
+		op_recover commit $testdir $env_cmd $testfile $cmd $msg $args
 		#
 		# Note that since prepare-discard ultimately aborts
 		# the txn, it must come before prepare-commit.
 		#
 		op_recover prepare-abort $testdir $env_cmd $testfile2 \
-			$cmd $msg
+			$cmd $msg $args
 		op_recover prepare-discard $testdir $env_cmd $testfile2 \
-			$cmd $msg
+			$cmd $msg $args
 		op_recover prepare-commit $testdir $env_cmd $testfile2 \
-			$cmd $msg
+			$cmd $msg $args
 	}
 
 	puts "\tRecd002.d: Verify db_printlog can read logfile"

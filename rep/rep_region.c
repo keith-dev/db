@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2001,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2001, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: rep_region.c,v 12.55 2008/01/11 20:50:03 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -11,7 +11,6 @@
 #include "db_int.h"
 #include "dbinc/db_page.h"
 #include "dbinc/db_am.h"
-#include "dbinc/log.h"
 
 static int __rep_egen_init  __P((ENV *, REP *));
 static int __rep_gen_init  __P((ENV *, REP *));
@@ -30,12 +29,15 @@ __rep_open(env)
 	REGENV *renv;
 	REGINFO *infop;
 	REP *rep;
-	int ret;
+	int i, ret;
+	char *p;
+	char fname[sizeof(REP_DIAGNAME) + 3];
 
 	db_rep = env->rep_handle;
 	infop = env->reginfo;
 	renv = infop->primary;
 	ret = 0;
+	DB_ASSERT(env, DBREP_DIAG_FILES < 100);
 
 	if (renv->rep_off == INVALID_ROFF) {
 		/* Must create the region. */
@@ -67,9 +69,19 @@ __rep_open(env)
 			return (ret);
 
 		if ((ret = __mutex_alloc(
+		    env, MTX_REP_DIAG, 0, &rep->mtx_diag)) != 0)
+			return (ret);
+
+		if ((ret = __mutex_alloc(
 		    env, MTX_REP_EVENT, 0, &rep->mtx_event)) != 0)
 			return (ret);
 
+		if ((ret = __mutex_alloc(
+		    env, MTX_REP_START, 0, &rep->mtx_repstart)) != 0)
+			return (ret);
+
+		rep->diag_off = 0;
+		rep->diag_index = 0;
 		rep->newmaster_event_gen = 0;
 		rep->notified_egen = 0;
 		rep->lease_off = INVALID_ROFF;
@@ -77,8 +89,19 @@ __rep_open(env)
 		rep->v2tally_off = INVALID_ROFF;
 		rep->eid = db_rep->eid;
 		rep->master_id = DB_EID_INVALID;
-		rep->gen = 0;
 		rep->version = DB_REPVERSION;
+
+		SH_TAILQ_INIT(&rep->waiters);
+		SH_TAILQ_INIT(&rep->free_waiters);
+
+		rep->config = db_rep->config;
+		/*
+		 * In-memory replication files must be set before we open
+		 * the env, so we know if it is in memory here.
+		 */
+		if (FLD_ISSET(rep->config, REP_C_INMEM))
+			FLD_CLR(env->dbenv->verbose, DB_VERB_REP_SYSTEM);
+
 		if ((ret = __rep_gen_init(env, rep)) != 0)
 			return (ret);
 		if ((ret = __rep_egen_init(env, rep)) != 0)
@@ -88,7 +111,6 @@ __rep_open(env)
 		rep->request_gap = db_rep->request_gap;
 		rep->max_gap = db_rep->max_gap;
 		rep->config_nsites = db_rep->config_nsites;
-		rep->config = db_rep->config;
 		rep->elect_timeout = db_rep->elect_timeout;
 		rep->full_elect_timeout = db_rep->full_elect_timeout;
 		rep->lease_timeout = db_rep->lease_timeout;
@@ -99,19 +121,97 @@ __rep_open(env)
 		rep->chkpt_delay = db_rep->chkpt_delay;
 		rep->priority = db_rep->my_priority;
 
-		F_SET(rep, REP_F_NOARCHIVE);
+		if ((ret = __rep_lockout_archive(env, rep)) != 0)
+			return (ret);
+
+		/* Copy application type flags if set before env open. */
+		if (F_ISSET(db_rep, DBREP_APP_REPMGR))
+			F_SET(rep, REP_F_APP_REPMGR);
+		if (F_ISSET(db_rep, DBREP_APP_BASEAPI))
+			F_SET(rep, REP_F_APP_BASEAPI);
 
 		/* Initialize encapsulating region. */
 		renv->rep_off = R_OFFSET(infop, rep);
 		(void)time(&renv->rep_timestamp);
 		renv->op_timestamp = 0;
 		F_CLR(renv, DB_REGENV_REPLOCKED);
-	} else
+
+#ifdef HAVE_REPLICATION_THREADS
+		if ((ret = __repmgr_open(env, rep)) != 0)
+			return (ret);
+#endif
+	} else {
 		rep = R_ADDR(infop, renv->rep_off);
+		/*
+		 * Prevent an application type mismatch between a process
+		 * and the environment it is trying to join.
+		 */
+		if ((F_ISSET(db_rep, DBREP_APP_REPMGR) &&
+		    F_ISSET(rep, REP_F_APP_BASEAPI)) ||
+		    (F_ISSET(db_rep, DBREP_APP_BASEAPI) &&
+		    F_ISSET(rep, REP_F_APP_REPMGR))) {
+			__db_errx(env,
+"Application type mismatch for a replication process joining the environment");
+			return (EINVAL);
+		}
+#ifdef HAVE_REPLICATION_THREADS
+		if ((ret = __repmgr_join(env, rep)) != 0)
+			return (ret);
+#endif
+	}
 
 	db_rep->region = rep;
+	/*
+	 * Open the diagnostic message files for this env handle.  We do
+	 * this no matter if we created the environment or not.
+	 */
+	if (FLD_ISSET(rep->config, REP_C_INMEM))
+		goto out;
+	for (i = 0; i < DBREP_DIAG_FILES; i++) {
+		db_rep->diagfile[i] = NULL;
+		(void)snprintf(fname, sizeof(fname), REP_DIAGNAME, i);
+		if ((ret = __db_appname(env, DB_APP_NONE, fname,
+		    NULL, &p)) != 0)
+			goto err;
+		ret = __os_open(env, p, 0, DB_OSO_CREATE, DB_MODE_600,
+		    &db_rep->diagfile[i]);
+		__os_free(env, p);
+		if (ret != 0)
+			goto err;
+	}
 
+out:
 	return (0);
+
+err:
+	(void)__rep_close_diagfiles(env);
+	return (ret);
+}
+
+/*
+ * __rep_close_diagfiles --
+ *	Close any diag message files that are open.
+ *
+ * PUBLIC: int __rep_close_diagfiles __P((ENV *));
+ */
+int
+__rep_close_diagfiles(env)
+	ENV *env;
+{
+	DB_REP *db_rep;
+	int i, ret, t_ret;
+
+	db_rep = env->rep_handle;
+	ret = t_ret = 0;
+
+	for (i = 0; i < DBREP_DIAG_FILES; i++) {
+		if (db_rep->diagfile[i] != NULL &&
+		    (t_ret = __os_closehandle(env, db_rep->diagfile[i])) != 0 &&
+		    ret == 0)
+			ret = t_ret;
+		db_rep->diagfile[i] = NULL;
+	}
+	return (ret);
 }
 
 /*
@@ -128,6 +228,7 @@ __rep_env_refresh(env)
 	REGENV *renv;
 	REGINFO *infop;
 	REP *rep;
+	struct __rep_waiter *waiter;
 	int ret, t_ret;
 
 	db_rep = env->rep_handle;
@@ -146,29 +247,49 @@ __rep_env_refresh(env)
 		F_CLR(rep, REP_F_START_CALLED);
 	}
 
+#ifdef HAVE_REPLICATION_THREADS
+	ret = __repmgr_env_refresh(env);
+#endif
+
 	/*
 	 * If a private region, return the memory to the heap.  Not needed for
 	 * filesystem-backed or system shared memory regions, that memory isn't
 	 * owned by any particular process.
 	 */
 	if (F_ISSET(env, ENV_PRIVATE)) {
-		db_rep = env->rep_handle;
-		if (db_rep->region != NULL) {
-			ret = __mutex_free(env, &db_rep->region->mtx_region);
+		if (rep != NULL) {
+			ret = __mutex_free(env, &rep->mtx_region);
 			if ((t_ret = __mutex_free(env,
-			    &db_rep->region->mtx_clientdb)) != 0 && ret == 0)
+			    &rep->mtx_clientdb)) != 0 && ret == 0)
 				ret = t_ret;
 			if ((t_ret = __mutex_free(env,
-			    &db_rep->region->mtx_ckp)) != 0 && ret == 0)
+			    &rep->mtx_ckp)) != 0 && ret == 0)
 				ret = t_ret;
 			if ((t_ret = __mutex_free(env,
-			    &db_rep->region->mtx_event)) != 0 && ret == 0)
+			    &rep->mtx_diag)) != 0 && ret == 0)
 				ret = t_ret;
+			if ((t_ret = __mutex_free(env,
+			    &rep->mtx_event)) != 0 && ret == 0)
+				ret = t_ret;
+			if ((t_ret = __mutex_free(env,
+			    &rep->mtx_repstart)) != 0 && ret == 0)
+				ret = t_ret;
+
+			/* Discard commit queue elements. */
+			DB_ASSERT(env, SH_TAILQ_EMPTY(&rep->waiters));
+			while ((waiter = SH_TAILQ_FIRST(&rep->free_waiters,
+				    __rep_waiter)) != NULL) {
+				SH_TAILQ_REMOVE(&rep->free_waiters,
+				    waiter, links, __rep_waiter);
+				__env_alloc_free(env->reginfo, waiter);
+			}
 		}
 
 		if (renv->rep_off != INVALID_ROFF)
 			__env_alloc_free(infop, R_ADDR(infop, renv->rep_off));
 	}
+	if ((t_ret = __rep_close_diagfiles(env)) != 0 && ret == 0)
+		ret = t_ret;
 
 	env->rep_handle->region = NULL;
 	return (ret);
@@ -187,7 +308,7 @@ __rep_env_close(env)
 	int ret, t_ret;
 
 	ret = __rep_preclose(env);
-	if ((t_ret = __rep_closefiles(env, 0)) != 0 && ret == 0)
+	if ((t_ret = __rep_closefiles(env)) != 0 && ret == 0)
 		ret = t_ret;
 	return (ret);
 }
@@ -206,8 +327,9 @@ __rep_preclose(env)
 	DB_LOG *dblp;
 	DB_REP *db_rep;
 	LOG *lp;
+	DB *dbp;
 	REP_BULK bulk;
-	int ret;
+	int ret, t_ret;
 
 	ret = 0;
 
@@ -221,9 +343,17 @@ __rep_preclose(env)
 	 */
 	if (db_rep == NULL || db_rep->region == NULL)
 		return (ret);
+
+	if ((dbp = db_rep->lsn_db) != NULL) {
+		ret = __db_close(dbp, NULL, DB_NOSYNC);
+		db_rep->lsn_db = NULL;
+	}
+
 	MUTEX_LOCK(env, db_rep->region->mtx_clientdb);
 	if (db_rep->rep_db != NULL) {
-		ret = __db_close(db_rep->rep_db, NULL, DB_NOSYNC);
+		if ((t_ret = __db_close(db_rep->rep_db,
+		    NULL, DB_NOSYNC)) != 0 && ret == 0)
+			ret = t_ret;
 		db_rep->rep_db = NULL;
 	}
 	/*
@@ -262,12 +392,11 @@ out:	MUTEX_UNLOCK(env, db_rep->region->mtx_clientdb);
  *	be called from __env_close and we need to check if the env,
  *	handles and regions are set up, or not.
  *
- * PUBLIC: int __rep_closefiles __P((ENV *, int));
+ * PUBLIC: int __rep_closefiles __P((ENV *));
  */
 int
-__rep_closefiles(env, do_restored)
+__rep_closefiles(env)
 	ENV *env;
-	int do_restored;
 {
 	DB_LOG *dblp;
 	DB_REP *db_rep;
@@ -282,7 +411,7 @@ __rep_closefiles(env, do_restored)
 		return (ret);
 	if (dblp == NULL)
 		return (ret);
-	if ((ret = __dbreg_close_files(env, do_restored)) == 0)
+	if ((ret = __dbreg_close_files(env, 0)) == 0)
 		F_CLR(db_rep, DBREP_OPENFILES);
 
 	return (ret);
@@ -305,15 +434,15 @@ __rep_egen_init(env, rep)
 	size_t cnt;
 	char *p;
 
-	if ((ret =
-	    __db_appname(env, DB_APP_NONE, REP_EGENNAME, 0, NULL, &p)) != 0)
+	if ((ret = __db_appname(env,
+	    DB_APP_NONE, REP_EGENNAME, NULL, &p)) != 0)
 		return (ret);
 	/*
 	 * If the file doesn't exist, create it now and initialize with 1.
 	 */
 	if (__os_exists(env, p, NULL) != 0) {
 		rep->egen = rep->gen + 1;
-		if ((ret = __rep_write_egen(env, rep->egen)) != 0)
+		if ((ret = __rep_write_egen(env, rep, rep->egen)) != 0)
 			goto err;
 	} else {
 		/*
@@ -325,8 +454,8 @@ __rep_egen_init(env, rep)
 		if ((ret = __os_read(env, fhp, &rep->egen, sizeof(u_int32_t),
 		    &cnt)) != 0 || cnt != sizeof(u_int32_t))
 			goto err1;
-		RPRINT(env, DB_VERB_REP_MISC,
-		    (env, "Read in egen %lu", (u_long)rep->egen));
+		RPRINT(env, (env, DB_VERB_REP_MISC, "Read in egen %lu",
+		    (u_long)rep->egen));
 err1:		 (void)__os_closehandle(env, fhp);
 	}
 err:	__os_free(env, p);
@@ -337,11 +466,14 @@ err:	__os_free(env, p);
  * __rep_write_egen --
  *	Write out the egen into the env file.
  *
- * PUBLIC: int __rep_write_egen __P((ENV *, u_int32_t));
+ * PUBLIC: int __rep_write_egen __P((ENV *, REP *, u_int32_t));
+ *
+ * Caller relies on us not dropping the REP_SYSTEM_LOCK.
  */
 int
-__rep_write_egen(env, egen)
+__rep_write_egen(env, rep, egen)
 	ENV *env;
+	REP *rep;
 	u_int32_t egen;
 {
 	DB_FH *fhp;
@@ -349,8 +481,16 @@ __rep_write_egen(env, egen)
 	size_t cnt;
 	char *p;
 
-	if ((ret =
-	    __db_appname(env, DB_APP_NONE, REP_EGENNAME, 0, NULL, &p)) != 0)
+	/*
+	 * If running in-memory replication, return without any file
+	 * operations.
+	 */
+	if (FLD_ISSET(rep->config, REP_C_INMEM)) {
+		return (0);
+	}
+
+	if ((ret = __db_appname(env,
+	    DB_APP_NONE, REP_EGENNAME, NULL, &p)) != 0)
 		return (ret);
 	if ((ret = __os_open(
 	    env, p, 0, DB_OSO_CREATE | DB_OSO_TRUNC, DB_MODE_600, &fhp)) == 0) {
@@ -380,15 +520,16 @@ __rep_gen_init(env, rep)
 	size_t cnt;
 	char *p;
 
-	if ((ret =
-	    __db_appname(env, DB_APP_NONE, REP_GENNAME, 0, NULL, &p)) != 0)
+	if ((ret = __db_appname(env,
+	    DB_APP_NONE, REP_GENNAME, NULL, &p)) != 0)
 		return (ret);
-	/*
-	 * If the file doesn't exist, create it now and initialize with 0.
-	 */
+
 	if (__os_exists(env, p, NULL) != 0) {
-		rep->gen = 0;
-		if ((ret = __rep_write_gen(env, rep->gen)) != 0)
+		/*
+		 * File doesn't exist, create it now and initialize with 0.
+		 */
+		SET_GEN(0);
+		if ((ret = __rep_write_gen(env, rep, rep->gen)) != 0)
 			goto err;
 	} else {
 		/*
@@ -400,7 +541,7 @@ __rep_gen_init(env, rep)
 		if ((ret = __os_read(env, fhp, &rep->gen, sizeof(u_int32_t),
 		    &cnt)) < 0 || cnt == 0)
 			goto err1;
-		RPRINT(env, DB_VERB_REP_MISC, (env, "Read in gen %lu",
+		RPRINT(env, (env, DB_VERB_REP_MISC, "Read in gen %lu",
 		    (u_long)rep->gen));
 err1:		 (void)__os_closehandle(env, fhp);
 	}
@@ -412,11 +553,12 @@ err:	__os_free(env, p);
  * __rep_write_gen --
  *	Write out the gen into the env file.
  *
- * PUBLIC: int __rep_write_gen __P((ENV *, u_int32_t));
+ * PUBLIC: int __rep_write_gen __P((ENV *, REP *, u_int32_t));
  */
 int
-__rep_write_gen(env, gen)
+__rep_write_gen(env, rep, gen)
 	ENV *env;
+	REP *rep;
 	u_int32_t gen;
 {
 	DB_FH *fhp;
@@ -424,8 +566,16 @@ __rep_write_gen(env, gen)
 	size_t cnt;
 	char *p;
 
-	if ((ret =
-	    __db_appname(env, DB_APP_NONE, REP_GENNAME, 0, NULL, &p)) != 0)
+	/*
+	 * If running in-memory replication, return without any file
+	 * operations.
+	 */
+	if (FLD_ISSET(rep->config, REP_C_INMEM)) {
+		return (0);
+	}
+
+	if ((ret = __db_appname(env,
+	    DB_APP_NONE, REP_GENNAME, NULL, &p)) != 0)
 		return (ret);
 	if ((ret = __os_open(
 	    env, p, 0, DB_OSO_CREATE | DB_OSO_TRUNC, DB_MODE_600, &fhp)) == 0) {

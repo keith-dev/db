@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 1996,2008 Oracle.  All rights reserved.
+# Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: recd001.tcl,v 12.9 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	recd001
 # TEST	Per-operation recovery tests for non-duplicate, non-split
@@ -25,6 +25,7 @@ proc recd001 { method {select 0} args } {
 	global fixed_len
 	source ./include.tcl
 
+	# puts "$args"
 	set envargs ""
 	set zero_idx [lsearch -exact $args "-zero_log"]
 	if { $zero_idx != -1 } {
@@ -54,7 +55,7 @@ proc recd001 { method {select 0} args } {
 	set testfile recd001.db
 	set testfile2 recd001-2.db
 
-	set flags "-create -txn -home $testdir $envargs"
+	set flags "-create -txn wrnosync -home $testdir $envargs"
 
 	# For queue databases, we end up locking all records from one
 	# to the end of the queue, which depends on the default pagesize.
@@ -74,8 +75,9 @@ proc recd001 { method {select 0} args } {
 	# the default or whatever might have been specified).
 	# Then remove it so we can compute fixed_len and create the
 	# real database.
-	set oflags "-create $omethod -mode 0644 \
+	set oflags "-create -auto_commit $omethod -mode 0644 \
 	    -env $dbenv $opts $testfile"
+	# puts "$oflags"
 	set db [eval {berkdb_open} $oflags]
 	error_check_good db_open [is_valid_db $db] TRUE
 	set stat [$db stat]
@@ -92,15 +94,15 @@ proc recd001 { method {select 0} args } {
 	# Convert the args again because fixed_len is now real.
 	# Create the databases and close the environment.
 	# cannot specify db truncate in txn protected env!!!
-	set opts [convert_args $method ""]
+	set opts [convert_args $method $args]
 	set omethod [convert_method $method]
-	set oflags "-create $omethod -mode 0644 \
+	set oflags "-create -auto_commit $omethod -mode 0644 \
 	    -env $dbenv $opts $testfile"
 	set db [eval {berkdb_open} $oflags]
 	error_check_good db_open [is_valid_db $db] TRUE
 	error_check_good db_close [$db close] 0
 
-	set oflags "-create $omethod -mode 0644 \
+	set oflags "-create -auto_commit $omethod -mode 0644 \
 	    -env $dbenv $opts $testfile2"
 	set db [eval {berkdb_open} $oflags]
 	error_check_good db_open [is_valid_db $db] TRUE
@@ -186,18 +188,18 @@ proc recd001 { method {select 0} args } {
 #				continue
 #			}
 #		}
-		op_recover abort $testdir $env_cmd $testfile $cmd $msg
-		op_recover commit $testdir $env_cmd $testfile $cmd $msg
+		op_recover abort $testdir $env_cmd $testfile $cmd $msg $args
+		op_recover commit $testdir $env_cmd $testfile $cmd $msg $args
 		#
 		# Note that since prepare-discard ultimately aborts
 		# the txn, it must come before prepare-commit.
 		#
 		op_recover prepare-abort $testdir $env_cmd $testfile2 \
-		    $cmd $msg
+		    $cmd $msg $args
 		op_recover prepare-discard $testdir $env_cmd $testfile2 \
-		    $cmd $msg
+		    $cmd $msg $args
 		op_recover prepare-commit $testdir $env_cmd $testfile2 \
-		    $cmd $msg
+		    $cmd $msg $args
 	}
 	set fixed_len $orig_fixed_len
 
@@ -250,7 +252,7 @@ proc recd001 { method {select 0} args } {
 		error_check_good dbclose [$db2 close] 0
 		error_check_good dbenvclose [$dbenv close] 0
 
-		op_recover $op $testdir $env_cmd $testfile $cmd $msg
+		op_recover $op $testdir $env_cmd $testfile $cmd $msg $args
 	}
 	return
 }

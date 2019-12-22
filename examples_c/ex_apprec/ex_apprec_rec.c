@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: ex_apprec_rec.c,v 12.7 2008/01/08 20:58:24 bostic Exp $
+ * $Id$
  */
 
 /*
@@ -13,12 +13,13 @@
  * significantly.
  */
 
+#include "db_config.h"
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
 #include <stdlib.h>
 
-#include <db.h>
+#include "db_int.h"
 
 #include "ex_apprec.h"
 

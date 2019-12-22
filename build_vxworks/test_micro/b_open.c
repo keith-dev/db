@@ -1,5 +1,9 @@
 /*
- * $Id: b_open.c,v 1.10 2007/12/21 13:58:30 bostic Exp $
+ * See the file LICENSE for redistribution information.
+ *
+ * Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
+ *
+ * $Id$
  */
 #include "bench.h"
 
@@ -97,7 +101,7 @@ b_open(int argc, char *argv[])
 	/* Create the database. */
 	DB_BENCH_ASSERT(db_create(&dbp, dbenv, 0) == 0);
 
-#if DB_VERSION_MAJOR >= 4 && DB_VERSION_MINOR >= 1
+#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 1)
 	DB_BENCH_ASSERT(dbp->open(
 	    dbp, NULL, fname, dbname, type, DB_CREATE, 0666) == 0);
 #else
@@ -110,7 +114,7 @@ b_open(int argc, char *argv[])
 	TIMER_START;
 	for (i = 0; i < count; ++i) {
 		DB_BENCH_ASSERT(db_create(&dbp, dbenv, 0) == 0);
-#if DB_VERSION_MAJOR >= 4 && DB_VERSION_MINOR >= 1
+#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 1)
 		DB_BENCH_ASSERT(dbp->open(
 		    dbp, NULL, fname, dbname, type, DB_CREATE, 0666) == 0);
 #else

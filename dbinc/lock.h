@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: lock.h,v 12.23 2008/05/07 12:27:33 bschmeck Exp $
+ * $Id$
  */
 
 #ifndef	_DB_LOCK_H_
@@ -22,6 +22,14 @@ extern "C" {
  */
 #define	DB_LOCK_INVALIDID	0
 #define	DB_LOCK_MAXID		0x7fffffff
+
+/*
+ * A locker's deadlock resolution priority is stored as a 32 bit unsigned
+ * integer.  The maximum priority is DB_LOCK_MAXPRIORITY and the default
+ * priorit is DB_LOCK_DEFPRIORITY.
+ */
+#define	DB_LOCK_DEFPRIORITY	100
+#define DB_LOCK_MAXPRIORITY	UINT32_MAX
 
 /*
  * Out of band value for a lock.  Locks contain an offset into a lock region,
@@ -81,6 +89,10 @@ typedef struct __db_lockregion {
 	roff_t		stat_off;	/* offset to object hash stats */
 	roff_t		locker_off;	/* offset of locker hash table */
 
+	u_int32_t	lock_id;	/* Current lock(er) id to allocate. */
+	u_int32_t	cur_maxid;	/* Current max lock(er) id. */
+	u_int32_t	nlockers;	/* Current number of lockers. */
+	int		nmodes;		/* Number of modes in conflict table. */
 	DB_LOCK_STAT	stat;		/* stats about locking. */
 } DB_LOCKREGION;
 
@@ -126,7 +138,8 @@ struct __db_locker {
 
 	u_int32_t nlocks;		/* Number of locks held. */
 	u_int32_t nwrites;		/* Number of write locks held. */
-
+	u_int32_t priority;		/* Deadlock resolution priority. */
+	
 	roff_t  master_locker;		/* Locker of master transaction. */
 	roff_t  parent_locker;		/* Parent of this child. */
 	SH_LIST_HEAD(_child) child_locker;	/* List of descendant txns;
@@ -145,13 +158,14 @@ struct __db_locker {
 #define	DB_LOCKER_DIRTY		0x0001
 #define	DB_LOCKER_INABORT	0x0002
 #define	DB_LOCKER_TIMEOUT	0x0004
+#define DB_LOCKER_FAMILY_LOCKER 0x0008
 	u_int32_t flags;
 };
 
 /*
  * Map a hash index into a partition.
  */
-#define LOCK_PART(reg, ndx)  (ndx % (reg)->part_t_size)
+#define	LOCK_PART(reg, ndx)  (ndx % (reg)->part_t_size)
 
 /*
  * Structure that contains information about a lock table partition.
@@ -167,8 +181,8 @@ typedef struct __db_lockpart{
 #endif
 } DB_LOCKPART;
 
-#define FREE_LOCKS(lt, part)	((lt)->part_array[part].free_locks)
-#define FREE_OBJS(lt, part)	((lt)->part_array[part].free_objs)
+#define	FREE_LOCKS(lt, part)	((lt)->part_array[part].free_locks)
+#define	FREE_OBJS(lt, part)	((lt)->part_array[part].free_objs)
 
 /*
  * DB_LOCKTAB --
@@ -193,7 +207,7 @@ struct __db_locktab {
  * Cast HELD and WANTED to ints, they are usually db_lockmode_t enums.
  */
 #define	CONFLICTS(T, R, HELD, WANTED) \
-	(T)->conflicts[((int)HELD) * (R)->stat.st_nmodes + ((int)WANTED)]
+	(T)->conflicts[((int)HELD) * (R)->nmodes + ((int)WANTED)]
 
 #define	OBJ_LINKS_VALID(L) ((L)->links.stqe_prev != -1)
 
@@ -247,19 +261,19 @@ struct __db_lock {
  * no-op, and MUTEX_LOCK(UNLOCK)_PARTITION acquire a mutex on a particular
  * partition of the lock table.
  */
-#define LOCK_SYSTEM_LOCK(lt, reg) do {					\
+#define	LOCK_SYSTEM_LOCK(lt, reg) do {					\
 	if ((reg)->part_t_size == 1)					\
 		MUTEX_LOCK((lt)->env, (reg)->mtx_region);		\
 } while (0)
-#define LOCK_SYSTEM_UNLOCK(lt, reg) do {				\
+#define	LOCK_SYSTEM_UNLOCK(lt, reg) do {				\
 	if ((reg)->part_t_size == 1)					\
 		MUTEX_UNLOCK((lt)->env, (reg)->mtx_region);		\
 } while (0)
-#define MUTEX_LOCK_PARTITION(lt, reg, p) do {				\
+#define	MUTEX_LOCK_PARTITION(lt, reg, p) do {				\
 	if ((reg)->part_t_size != 1)					\
 		MUTEX_LOCK((lt)->env, (lt)->part_array[p].mtx_part);	\
 } while (0)
-#define MUTEX_UNLOCK_PARTITION(lt, reg, p) do {				\
+#define	MUTEX_UNLOCK_PARTITION(lt, reg, p) do {				\
 	if ((reg)->part_t_size != 1)					\
 		MUTEX_UNLOCK((lt)->env, (lt)->part_array[p].mtx_part);	\
 } while (0)
@@ -273,7 +287,7 @@ struct __db_lock {
 	MUTEX_LOCK_PARTITION(lt, reg, LOCK_PART(reg, ndx));
 
 #define	OBJECT_UNLOCK(lt, reg, ndx)					\
-	MUTEX_UNLOCK_PARTITION(lt, reg, LOCK_PART(reg, ndx));			
+	MUTEX_UNLOCK_PARTITION(lt, reg, LOCK_PART(reg, ndx));
 
 /*
  * Protect the object deadlock detector queue and the locker allocation

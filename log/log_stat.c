@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: log_stat.c,v 12.22 2008/01/08 20:58:41 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -11,7 +11,6 @@
 #include "db_int.h"
 #include "dbinc/db_page.h"
 #include "dbinc/db_am.h"
-#include "dbinc/log.h"
 
 #ifdef HAVE_STATISTICS
 static int __log_print_all __P((ENV *, u_int32_t));

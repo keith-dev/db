@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 1996,2008 Oracle.  All rights reserved.
+# Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: test042.tcl,v 12.6 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	test042
 # TEST	Concurrent Data Store test (CDB)
@@ -36,6 +36,9 @@ proc test042 { method {nentries 1000} args } {
 		puts "Test042 skipping for security"
 		return
 	}
+
+	# Don't 'eval' the args here -- we want them to stay in 
+	# a lump until we pass them to berkdb_open and mdbscript.
 	test042_body $method $nentries 0 $args
 	test042_body $method $nentries 1 $args
 }
@@ -67,6 +70,15 @@ proc test042_body { method nentries alldb args } {
 		}
 	}
 
+	# Eval the args into 'tempargs' so we can extract the 
+	# pageargs and readjust the number of mutexes.  However, 
+	# leave 'args' itself alone so it can be passed into 
+	# mdbscript.
+
+	eval set tempargs $args
+	set pageargs ""
+	split_pageargs $tempargs pageargs
+
 	# Create the database and open the dictionary
 	set basename test042
 	set t1 $testdir/t1
@@ -75,7 +87,7 @@ proc test042_body { method nentries alldb args } {
 
 	env_cleanup $testdir
 
-	set env [eval {berkdb_env -create} $eflag -home $testdir]
+	set env [eval {berkdb_env -create} $eflag $pageargs -home $testdir]
 	error_check_good dbenv [is_valid_env $env] TRUE
 
 	# Env is created, now set up database
@@ -93,7 +105,7 @@ proc test042_body { method nentries alldb args } {
 	error_check_good env_remove $ret 0
 
 	set env [eval {berkdb_env \
-	    -create -cachesize {0 1048576 1}} $eflag -home $testdir]
+	    -create -cachesize {0 1048576 1}} $pageargs $eflag -home $testdir]
 	error_check_good dbenv [is_valid_widget $env env] TRUE
 
 	if { $do_exit == 1 } {
@@ -113,10 +125,10 @@ proc test042_body { method nentries alldb args } {
 		}
 		puts "exec $tclsh_path $test_path/wrap.tcl \
 		    mdbscript.tcl $testdir/test042.$i.log \
-		    $method $testdir $tf $nentries $iter $i $procs &"
+		    $method $testdir $tf $nentries $iter $i $procs $args &"
 		set p [exec $tclsh_path $test_path/wrap.tcl \
 		    mdbscript.tcl $testdir/test042.$i.log $method \
-		    $testdir $tf $nentries $iter $i $procs &]
+		    $testdir $tf $nentries $iter $i $procs $args &]
 		lappend pidlist $p
 	}
 	puts "Test042: $procs independent processes now running"
@@ -126,7 +138,7 @@ proc test042_body { method nentries alldb args } {
 	set dblist [glob $testdir/$basename.*.db]
 	foreach file $dblist {
 		set tf [file tail $file]
-		set db [eval {berkdb_open -env $env $tf}]
+		set db [eval {berkdb_open -env $env} $oargs $tf]
 		set statret [$db stat]
 		foreach pair $statret {
 			set fld [lindex $pair 0]

@@ -45,7 +45,6 @@ import java.util.Comparator;
 %rename(rename0) rename;
 %rename(verify0) verify;
 %rename(abort0) abort;
-%rename(commit0) commit;
 %rename(discard0) discard;
 
 /* Special case methods */
@@ -122,12 +121,28 @@ import java.util.Comparator;
 		event_notify_handler.handleRepClientEvent();
 	}
 
+	private final void handle_rep_dupmaster_event_notify() {
+		event_notify_handler.handleRepDupmasterEvent();
+	}
+
 	private final void handle_rep_elected_event_notify() {
 		event_notify_handler.handleRepElectedEvent();
 	}
 
+	private final void handle_rep_election_failed_event_notify() {
+		event_notify_handler.handleRepElectionFailedEvent();
+	}
+	
+	private final void handle_rep_join_failure_event_notify() {
+		event_notify_handler.handleRepJoinFailureEvent();
+	}
+
 	private final void handle_rep_master_event_notify() {
 		event_notify_handler.handleRepMasterEvent();
+	}
+
+	private final void handle_rep_master_failure_event_notify() {
+		event_notify_handler.handleRepMasterFailureEvent();
 	}
 
 	private final void handle_rep_new_master_event_notify(int envid) {
@@ -296,11 +311,14 @@ import java.util.Comparator;
 	public Database wrapper;
 	private RecordNumberAppender append_recno_handler;
 	private Comparator bt_compare_handler;
+	private BtreeCompressor bt_compress_handler;
+	private BtreeCompressor bt_decompress_handler;
 	private BtreePrefixCalculator bt_prefix_handler;
 	private Comparator dup_compare_handler;
 	private FeedbackHandler db_feedback_handler;
 	private Comparator h_compare_handler;
 	private Hasher h_hash_handler;
+	private PartitionHandler partition_handler;
 	private SecondaryKeyCreator seckey_create_handler;
 	private SecondaryMultiKeyCreator secmultikey_create_handler;
 	private ForeignKeyNullifier foreignkey_nullify_handler;
@@ -355,8 +373,30 @@ import java.util.Comparator;
 		return bt_compare_handler.compare(arr1, arr2);
 	}
 
+	private final int handle_bt_compress(DatabaseEntry dbt1,
+	    DatabaseEntry dbt2, DatabaseEntry dbt3, DatabaseEntry dbt4,
+	    DatabaseEntry dbt5) {
+		return bt_compress_handler.compress(wrapper, dbt1, dbt2,
+		    dbt3, dbt4, dbt5) ? 0 : DbConstants.DB_BUFFER_SMALL;
+	}
+
+	private final int handle_bt_decompress(DatabaseEntry dbt1,
+	    DatabaseEntry dbt2, DatabaseEntry dbt3, DatabaseEntry dbt4,
+	    DatabaseEntry dbt5) {
+		return bt_compress_handler.decompress(wrapper, dbt1, dbt2,
+		    dbt3, dbt4, dbt5) ? 0 : DbConstants.DB_BUFFER_SMALL;
+	}
+
 	public Comparator get_bt_compare() {
 		return bt_compare_handler;
+	}
+
+	public BtreeCompressor get_bt_compress() {
+		return bt_compress_handler;
+	}
+
+	public BtreeCompressor get_bt_decompress() {
+		return bt_decompress_handler;
 	}
 
 	private final int handle_bt_prefix(DatabaseEntry dbt1,
@@ -456,6 +496,14 @@ import java.util.Comparator;
 
 	public void set_foreignmultikey_nullifier(ForeignMultiKeyNullifier nullify){
 		this.foreignmultikey_nullify_handler = nullify;
+	}
+
+	private final int handle_partition(DatabaseEntry dbt1) {
+		return partition_handler.partition(wrapper, dbt1);
+	}
+
+	public PartitionHandler get_partition_callback() {
+		return partition_handler;
 	}
 
 	public synchronized void remove(String file, String database, int flags)
@@ -583,6 +631,7 @@ import java.util.Comparator;
 %}
 
 %typemap(javacode) struct DbTxn %{
+	public byte[] commitToken;
 	public void abort() throws DatabaseException {
 		try {
 			abort0();
@@ -593,7 +642,7 @@ import java.util.Comparator;
 
 	public void commit(int flags) throws DatabaseException {
 		try {
-			commit0(flags);
+			db_javaJNI.DbTxn_commit(swigCPtr, this, flags);
 		} finally {
 			swigCPtr = 0;
 		}

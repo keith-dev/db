@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1997, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: bt_recno.c,v 12.40 2008/02/12 16:42:54 bschmeck Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -18,7 +18,10 @@ static int  __ram_add __P((DBC *, db_recno_t *, DBT *, u_int32_t, u_int32_t));
 static int  __ram_source __P((DB *));
 static int  __ram_sread __P((DBC *, db_recno_t));
 static int  __ram_update __P((DBC *, db_recno_t, int));
-
+static int __ram_ca_getorder
+    __P((DBC *, DBC *, u_int32_t *, db_pgno_t, u_int32_t, void *));
+static int __ram_ca_setorder
+    __P((DBC *, DBC *, u_int32_t *, db_pgno_t, u_int32_t, void *));
 /*
  * In recno, there are two meanings to the on-page "deleted" flag.  If we're
  * re-numbering records, it means the record was implicitly created.  We skip
@@ -178,6 +181,8 @@ __ram_append(dbc, key, data)
 		ret = __db_retcopy(dbc->env, key, &cp->recno,
 		    sizeof(cp->recno), &dbc->rkey->data, &dbc->rkey->ulen);
 
+	if (ret != 0)
+		F_SET(dbc, DBC_ERROR);
 	return (ret);
 }
 
@@ -185,24 +190,31 @@ __ram_append(dbc, key, data)
  * __ramc_del --
  *	Recno DBC->del function.
  *
- * PUBLIC: int __ramc_del __P((DBC *));
+ * PUBLIC: int __ramc_del __P((DBC *, u_int32_t));
  */
 int
-__ramc_del(dbc)
+__ramc_del(dbc, flags)
 	DBC *dbc;
+	u_int32_t flags;
 {
 	BKEYDATA bk;
 	BTREE *t;
 	BTREE_CURSOR *cp;
 	DB *dbp;
 	DBT hdr, data;
+	DB_LOCK next_lock, prev_lock;
 	DB_LSN lsn;
+	db_pgno_t npgno, ppgno, save_npgno, save_ppgno;
 	int exact, nc, ret, stack, t_ret;
 
 	dbp = dbc->dbp;
 	cp = (BTREE_CURSOR *)dbc->internal;
 	t = dbp->bt_internal;
 	stack = 0;
+	save_npgno = save_ppgno = PGNO_INVALID;
+	LOCK_INIT(next_lock);
+	LOCK_INIT(prev_lock);
+	COMPQUIET(flags, 0);
 
 	/*
 	 * The semantics of cursors during delete are as follows: in
@@ -219,7 +231,7 @@ __ramc_del(dbc)
 		return (DB_KEYEMPTY);
 
 	/* Search the tree for the key; delete only deletes exact matches. */
-	if ((ret = __bam_rsearch(dbc, &cp->recno, SR_DELETE, 1, &exact)) != 0)
+retry:	if ((ret = __bam_rsearch(dbc, &cp->recno, SR_DELETE, 1, &exact)) != 0)
 		goto err;
 	if (!exact) {
 		ret = DB_NOTFOUND;
@@ -228,9 +240,6 @@ __ramc_del(dbc)
 	stack = 1;
 
 	/* Copy the page into the cursor. */
-	if ((ret = __memp_dirty(dbp->mpf,
-	    &cp->csp->page, dbc->thread_info, dbc->txn, dbc->priority, 0)) != 0)
-		goto err;
 	STACK_TO_CURSOR(cp, ret);
 	if (ret != 0)
 		goto err;
@@ -252,6 +261,20 @@ __ramc_del(dbc)
 	}
 
 	if (F_ISSET(cp, C_RENUMBER)) {
+		/* If we are going to drop the page, lock its neighbors. */
+		if (STD_LOCKING(dbc) && NUM_ENT(cp->page) == 1 &&
+		    PGNO(cp->page) != BAM_ROOT_PGNO(dbc)) {
+			if ((npgno = NEXT_PGNO(cp->page)) != PGNO_INVALID)
+				TRY_LOCK(dbc, npgno, save_npgno,
+				    next_lock, DB_LOCK_WRITE, retry);
+			if (ret != 0)
+				goto err;
+			if ((ppgno = PREV_PGNO(cp->page)) != PGNO_INVALID)
+				TRY_LOCK(dbc, ppgno, save_ppgno,
+				    prev_lock, DB_LOCK_WRITE, retry);
+			if (ret != 0)
+				goto err;
+		}
 		/* Delete the item, adjust the counts, adjust the cursors. */
 		if ((ret = __bam_ditem(dbc, cp->page, cp->indx)) != 0)
 			goto err;
@@ -259,9 +282,9 @@ __ramc_del(dbc)
 			goto err;
 		if ((ret = __ram_ca(dbc, CA_DELETE, &nc)) != 0)
 			goto err;
-		if (nc > 0 &&
-		    CURADJ_LOG(dbc) && (ret = __bam_rcuradj_log(dbp, dbc->txn,
-		    &lsn, 0, CA_DELETE, cp->root, cp->recno, cp->order)) != 0)
+		if (nc > 0 && CURADJ_LOG(dbc) &&
+		    (ret = __bam_rcuradj_log(dbp, dbc->txn, &lsn, 0,
+		    CA_DELETE, BAM_ROOT_PGNO(dbc), cp->recno, cp->order)) != 0)
 			goto err;
 
 		/*
@@ -277,12 +300,13 @@ __ramc_del(dbc)
 		 * around until the last cursor referencing the empty tree is
 		 * are closed, and then clean it up.
 		 */
-		if (NUM_ENT(cp->page) == 0 && PGNO(cp->page) != cp->root) {
+		if (NUM_ENT(cp->page) == 0 &&
+		    PGNO(cp->page) != BAM_ROOT_PGNO(dbc)) {
 			/*
 			 * We want to delete a single item out of the last page
 			 * that we're not deleting.
 			 */
-			ret = __bam_dpages(dbc, 0, 0);
+			ret = __bam_dpages(dbc, 0, BTD_RELINK);
 
 			/*
 			 * Regardless of the return from __bam_dpages, it will
@@ -290,6 +314,8 @@ __ramc_del(dbc)
 			 */
 			stack = 0;
 			cp->page = NULL;
+			LOCK_INIT(cp->lock);
+			cp->lock_mode = DB_LOCK_NG;
 		}
 	} else {
 		/* Use a delete/put pair to replace the record with a marker. */
@@ -307,7 +333,13 @@ __ramc_del(dbc)
 
 	t->re_modified = 1;
 
-err:	if (stack && (t_ret = __bam_stkrel(dbc, STK_CLRDBC)) != 0 && ret == 0)
+err:	if (ret != 0)
+		F_SET(dbc, DBC_ERROR);
+	if (stack && (t_ret = __bam_stkrel(dbc, STK_CLRDBC)) != 0 && ret == 0)
+		ret = t_ret;
+	if ((t_ret = __TLPUT(dbc, next_lock)) != 0 && ret == 0)
+		ret = t_ret;
+	if ((t_ret = __TLPUT(dbc, prev_lock)) != 0 && ret == 0)
 		ret = t_ret;
 
 	return (ret);
@@ -532,8 +564,8 @@ retry:	switch (flags) {
 
 		if (flags == DB_GET_BOTH ||
 		    flags == DB_GET_BOTHC || flags == DB_GET_BOTH_RANGE) {
-			if ((ret = __bam_cmp(dbp, dbc->thread_info, dbc->txn,
-			    data, cp->page, cp->indx, __bam_defcmp, &cmp)) != 0)
+			if ((ret = __bam_cmp(dbc, data, cp->page, cp->indx,
+			    __bam_defcmp, &cmp)) != 0)
 				return (ret);
 			if (cmp == 0)
 				break;
@@ -605,8 +637,9 @@ __ramc_put(dbc, key, data, flags, pgnop)
 			    &cp->recno, data, DB_APPEND, 0)) != 0)
 				return (ret);
 			if (CURADJ_LOG(dbc) &&
-			    (ret = __bam_rcuradj_log(dbp, dbc->txn, &lsn, 0,
-			    CA_ICURRENT, cp->root, cp->recno, cp->order)) != 0)
+			    (ret = __bam_rcuradj_log(dbp, dbc->txn,
+			    &lsn, 0, CA_ICURRENT,
+			    BAM_ROOT_PGNO(dbc), cp->recno, cp->order)) != 0)
 				return (ret);
 			return (0);
 		default:
@@ -618,8 +651,8 @@ __ramc_put(dbc, key, data, flags, pgnop)
 	 * no duplicates, these are identical and mean "put the given
 	 * datum at the given recno".
 	 */
-	if (flags == DB_KEYFIRST ||
-	    flags == DB_KEYLAST || flags == DB_NOOVERWRITE) {
+	if (flags == DB_KEYFIRST || flags == DB_KEYLAST ||
+	    flags == DB_NOOVERWRITE || flags == DB_OVERWRITE_DUP) {
 		ret = __ram_getno(dbc, key, &cp->recno, 1);
 		if (ret == 0 || ret == DB_NOTFOUND)
 			ret = __ram_add(dbc, &cp->recno, data, flags, 0);
@@ -682,7 +715,7 @@ split:	if ((ret = __bam_rsearch(dbc, &cp->recno, SR_INSERT, 1, &exact)) != 0)
 		/* Only log if __ram_ca found any relevant cursors. */
 		if (nc > 0 && CURADJ_LOG(dbc) &&
 		    (ret = __bam_rcuradj_log(dbp, dbc->txn, &lsn, 0, CA_IAFTER,
-		    cp->root, cp->recno, cp->order)) != 0)
+		    BAM_ROOT_PGNO(dbc), cp->recno, cp->order)) != 0)
 			goto err;
 		break;
 	case DB_BEFORE:
@@ -693,7 +726,7 @@ split:	if ((ret = __bam_rsearch(dbc, &cp->recno, SR_INSERT, 1, &exact)) != 0)
 		/* Only log if __ram_ca found any relevant cursors. */
 		if (nc > 0 && CURADJ_LOG(dbc) &&
 		    (ret = __bam_rcuradj_log(dbp, dbc->txn, &lsn, 0, CA_IBEFORE,
-		    cp->root, cp->recno, cp->order)) != 0)
+		    BAM_ROOT_PGNO(dbc), cp->recno, cp->order)) != 0)
 			goto err;
 		break;
 	case DB_CURRENT:
@@ -708,9 +741,9 @@ split:	if ((ret = __bam_rsearch(dbc, &cp->recno, SR_INSERT, 1, &exact)) != 0)
 		/* Only log if __ram_ca found any relevant cursors. */
 		if ((ret = __ram_ca(dbc, CA_ICURRENT, &nc)) != 0)
 			goto err;
-		if (nc > 0 && CURADJ_LOG(dbc) &&
-		    (ret = __bam_rcuradj_log(dbp, dbc->txn, &lsn, 0,
-		    CA_ICURRENT, cp->root, cp->recno, cp->order)) != 0)
+		if (nc > 0 && CURADJ_LOG(dbc) && (ret = __bam_rcuradj_log(dbp,
+		    dbc->txn, &lsn, 0, CA_ICURRENT,
+		    BAM_ROOT_PGNO(dbc), cp->recno, cp->order)) != 0)
 			goto err;
 		break;
 	default:
@@ -726,7 +759,125 @@ split:	if ((ret = __bam_rsearch(dbc, &cp->recno, SR_INSERT, 1, &exact)) != 0)
 	/* The cursor was reset, no further delete adjustment is necessary. */
 err:	CD_CLR(cp);
 
+	if (ret != 0)
+		F_SET(dbc, DBC_ERROR);
 	return (ret);
+}
+
+static int
+__ram_ca_getorder(dbc, my_dbc, orderp, root_pgno, recno, args)
+	DBC *dbc, *my_dbc;
+	u_int32_t *orderp;
+	db_pgno_t root_pgno;
+	u_int32_t recno;
+	void *args;
+{
+	BTREE_CURSOR *cp;
+
+	COMPQUIET(my_dbc, NULL);
+	COMPQUIET(args, NULL);
+
+	cp = (BTREE_CURSOR *)dbc->internal;
+	if (root_pgno == BAM_ROOT_PGNO(dbc) &&
+	    recno == cp->recno && CD_ISSET(cp) &&
+	    *orderp <= cp->order &&
+	    !MVCC_SKIP_CURADJ(dbc, BAM_ROOT_PGNO(dbc)))
+		*orderp = cp->order;
+	return (0);
+}
+
+static int
+__ram_ca_setorder(dbc, my_dbc, foundp, pgno, order, args)
+	DBC *dbc, *my_dbc;
+	u_int32_t *foundp;
+	db_pgno_t pgno;
+	u_int32_t order;
+	void *args;
+{
+	BTREE_CURSOR *cp, *cp_arg;
+	int adjusted;
+	ca_recno_arg op;
+	db_recno_t recno;
+
+	COMPQUIET(pgno, 0);
+
+	cp = (BTREE_CURSOR *)dbc->internal;
+	cp_arg = (BTREE_CURSOR *)my_dbc->internal;
+	op = *(ca_recno_arg *)args;
+
+	if (cp_arg->root != cp->root ||
+	    MVCC_SKIP_CURADJ(dbc, BAM_ROOT_PGNO(dbc)))
+		return (0);
+	++(*foundp);
+	adjusted = 0;
+	recno = cp_arg->recno;
+	switch (op) {
+	case CA_DELETE:
+		if (recno < cp->recno) {
+			--cp->recno;
+			/*
+			 * If the adjustment made them equal,
+			 * we have to merge the orders.
+			 */
+			if (recno == cp->recno && CD_ISSET(cp))
+				cp->order += order;
+		} else if (recno == cp->recno &&
+		    !CD_ISSET(cp)) {
+			CD_SET(cp);
+			cp->order = order;
+			/*
+			 * If we're deleting the item, we can't
+			 * keep a streaming offset cached.
+			 */
+			cp->stream_start_pgno = PGNO_INVALID;
+		}
+		break;
+	case CA_IBEFORE:
+		/*
+		 * IBEFORE is just like IAFTER, except that we
+		 * adjust cursors on the current record too.
+		 */
+		if (C_EQUAL(cp_arg, cp)) {
+			++cp->recno;
+			adjusted = 1;
+		}
+		goto iafter;
+	case CA_ICURRENT:
+
+		/*
+		 * If the original cursor wasn't deleted, we
+		 * just did a replacement and so there's no
+		 * need to adjust anything--we shouldn't have
+		 * gotten this far.  Otherwise, we behave
+		 * much like an IAFTER, except that all
+		 * cursors pointing to the current item get
+		 * marked undeleted and point to the new
+		 * item.
+		 */
+		DB_ASSERT(dbc->dbp->env, CD_ISSET(cp_arg));
+		if (C_EQUAL(cp_arg, cp)) {
+			CD_CLR(cp);
+			break;
+		}
+		/* FALLTHROUGH */
+	case CA_IAFTER:
+iafter:		if (!adjusted && C_LESSTHAN(cp_arg, cp)) {
+			++cp->recno;
+			adjusted = 1;
+		}
+		if (recno == cp->recno && adjusted)
+			/*
+			 * If we've moved this cursor's recno,
+			 * split its order number--i.e.,
+			 * decrement it by enough so that
+			 * the lowest cursor moved has order 1.
+			 * cp_arg->order is the split point,
+			 * so decrement by one less than that.
+			 */
+			cp->order -= (cp_arg->order - 1);
+		break;
+	}
+	return (0);
 }
 
 /*
@@ -741,13 +892,12 @@ __ram_ca(dbc_arg, op, foundp)
 	ca_recno_arg op;
 	int *foundp;
 {
-	BTREE_CURSOR *cp, *cp_arg;
-	DB *dbp, *ldbp;
-	DBC *dbc;
+	BTREE_CURSOR *cp_arg;
+	DB *dbp;
 	ENV *env;
 	db_recno_t recno;
-	u_int32_t order;
-	int adjusted, found;
+	u_int32_t found, order;
+	int ret;
 
 	dbp = dbc_arg->dbp;
 	env = dbp->env;
@@ -760,7 +910,6 @@ __ram_ca(dbc_arg, op, foundp)
 	 */
 	DB_ASSERT(env, F_ISSET(cp_arg, C_RENUMBER));
 
-	MUTEX_LOCK(env, env->mtx_dblist);
 	/*
 	 * Adjust the cursors.  See the comment in __bam_ca_delete().
 	 *
@@ -771,105 +920,18 @@ __ram_ca(dbc_arg, op, foundp)
 	 * the cursor list.
 	 */
 	if (op == CA_DELETE) {
-		FIND_FIRST_DB_MATCH(env, dbp, ldbp);
-		for (order = 1;
-		    ldbp != NULL && ldbp->adj_fileid == dbp->adj_fileid;
-		    ldbp = TAILQ_NEXT(ldbp, dblistlinks)) {
-			MUTEX_LOCK(env, dbp->mutex);
-			TAILQ_FOREACH(dbc, &ldbp->active_queue, links) {
-				cp = (BTREE_CURSOR *)dbc->internal;
-				if (cp_arg->root == cp->root &&
-				    recno == cp->recno && CD_ISSET(cp) &&
-				    order <= cp->order &&
-				    !MVCC_SKIP_CURADJ(dbc, cp->root))
-					order = cp->order + 1;
-			}
-			MUTEX_UNLOCK(env, dbp->mutex);
-		}
+		if ((ret = __db_walk_cursors(dbp, NULL, __ram_ca_getorder,
+		    &order, BAM_ROOT_PGNO(dbc_arg), recno, NULL)) != 0)
+			return (ret);
+		order++;
 	} else
 		order = INVALID_ORDER;
 
-	/* Now go through and do the actual adjustments. */
-	FIND_FIRST_DB_MATCH(env, dbp, ldbp);
-	for (found = 0;
-	    ldbp != NULL && ldbp->adj_fileid == dbp->adj_fileid;
-	    ldbp = TAILQ_NEXT(ldbp, dblistlinks)) {
-		MUTEX_LOCK(env, dbp->mutex);
-		TAILQ_FOREACH(dbc, &ldbp->active_queue, links) {
-			cp = (BTREE_CURSOR *)dbc->internal;
-			if (cp_arg->root != cp->root ||
-			    MVCC_SKIP_CURADJ(dbc, cp->root))
-				continue;
-			++found;
-			adjusted = 0;
-			switch (op) {
-			case CA_DELETE:
-				if (recno < cp->recno) {
-					--cp->recno;
-					/*
-					 * If the adjustment made them equal,
-					 * we have to merge the orders.
-					 */
-					if (recno == cp->recno && CD_ISSET(cp))
-						cp->order += order;
-				} else if (recno == cp->recno &&
-				    !CD_ISSET(cp)) {
-					CD_SET(cp);
-					cp->order = order;
-				}
-				break;
-			case CA_IBEFORE:
-				/*
-				 * IBEFORE is just like IAFTER, except that we
-				 * adjust cursors on the current record too.
-				 */
-				if (C_EQUAL(cp_arg, cp)) {
-					++cp->recno;
-					adjusted = 1;
-				}
-				goto iafter;
-			case CA_ICURRENT:
-
-				/*
-				 * If the original cursor wasn't deleted, we
-				 * just did a replacement and so there's no
-				 * need to adjust anything--we shouldn't have
-				 * gotten this far.  Otherwise, we behave
-				 * much like an IAFTER, except that all
-				 * cursors pointing to the current item get
-				 * marked undeleted and point to the new
-				 * item.
-				 */
-				DB_ASSERT(env, CD_ISSET(cp_arg));
-				if (C_EQUAL(cp_arg, cp)) {
-					CD_CLR(cp);
-					break;
-				}
-				/* FALLTHROUGH */
-			case CA_IAFTER:
-iafter:				if (!adjusted && C_LESSTHAN(cp_arg, cp)) {
-					++cp->recno;
-					adjusted = 1;
-				}
-				if (recno == cp->recno && adjusted)
-					/*
-					 * If we've moved this cursor's recno,
-					 * split its order number--i.e.,
-					 * decrement it by enough so that
-					 * the lowest cursor moved has order 1.
-					 * cp_arg->order is the split point,
-					 * so decrement by one less than that.
-					 */
-					cp->order -= (cp_arg->order - 1);
-				break;
-			}
-		}
-		MUTEX_UNLOCK(dbp->env, dbp->mutex);
-	}
-	MUTEX_UNLOCK(env, env->mtx_dblist);
-
+	if ((ret = __db_walk_cursors(dbp, dbc_arg,
+	    __ram_ca_setorder, &found, 0, order, &op)) != 0)
+		return (ret);
 	if (foundp != NULL)
-		*foundp = found;
+		*foundp = (int)found;
 	return (0);
 }
 
@@ -988,7 +1050,7 @@ __ram_source(dbp)
 
 	/* Find the real name, and swap out the one we had before. */
 	if ((ret = __db_appname(env,
-	    DB_APP_DATA, t->re_source, 0, NULL, &source)) != 0)
+	    DB_APP_DATA, t->re_source, NULL, &source)) != 0)
 		return (ret);
 	__os_free(env, t->re_source);
 	t->re_source = source;

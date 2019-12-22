@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 2004,2008 Oracle.  All rights reserved.
+# Copyright (c) 2004, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: rep031.tcl,v 12.25 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	rep031
 # TEST	Test of internal initialization and blocked operations.
@@ -14,22 +14,26 @@
 # TEST	Sleep 30+ seconds.
 # TEST  Test that blocked operations are now unblocked.
 #
-proc rep031 { method { niter 200 } { tnum "031" } args } {
+proc rep031 { method { niter 400 } { tnum "031" } args } {
 
 	source ./include.tcl
-	if { $is_windows9x_test == 1 } {
-		puts "Skipping replication test on Win 9x platform."
-		return
-	}
+	global databases_in_memory
+	global repfiles_in_memory
 
-	# There is nothing method-sensitive in this test, so
-	# skip for all except btree.
+	# This test is not method-sensitive, but we need to
+	# exercise log_archive with queue extents, so test 
+	# queueext.
 	if { $checking_valid_methods } {
-		set test_methods { btree }
+		set test_methods {}
+		foreach method $valid_methods {
+			if { [is_queueext $method] == 1 } {
+				lappend test_methods $method
+			}
+		}
 		return $test_methods
 	}
-	if { [is_btree $method] != 1 } {
-		puts "Skipping rep031 for method $method."
+	if { [is_queueext $method] == 0 } {
+		puts "Rep$tnum: Skipping for non-queueext method."
 		return
 	}
 
@@ -42,6 +46,22 @@ proc rep031 { method { niter 200 } { tnum "031" } args } {
                 puts "Rep$tnum: skipping for specific pagesizes"
                 return
         }
+
+	# Set up for on-disk or in-memory databases.
+	set msg "using on-disk databases"
+	if { $databases_in_memory } {
+		set msg "using named in-memory databases"
+		if { [is_queueext $method] } { 
+			puts -nonewline "Skipping rep$tnum for method "
+			puts "$method with named in-memory databases."
+			return
+		}
+	}
+
+	set msg2 "and on-disk replication files"
+	if { $repfiles_in_memory } {
+		set msg2 "and in-memory replication files"
+	}
 
 	# Run the body of the test with and without recovery,
 	# and with and without cleaning.  Skip recovery with in-memory
@@ -56,8 +76,9 @@ proc rep031 { method { niter 200 } { tnum "031" } args } {
 					    with in-memory logs."
 					continue
 				}
-				puts "Rep$tnum ($method $r $c $args): Test of\
-				    internal init and blocked operations."
+				puts "Rep$tnum ($method $r $c $args):\
+				    Test of internal init and blocked\
+				    operations $msg $msg2."
 				puts "Rep$tnum: Master logs are [lindex $l 0]"
 				puts "Rep$tnum: Client logs are [lindex $l 1]"
 				rep031_sub $method $niter $tnum $l $r $c $args
@@ -68,12 +89,19 @@ proc rep031 { method { niter 200 } { tnum "031" } args } {
 
 proc rep031_sub { method niter tnum logset recargs clean largs } {
 	source ./include.tcl
+	global databases_in_memory
+	global repfiles_in_memory
 	global rep_verbose
 	global verbose_type
 
 	set verbargs ""
 	if { $rep_verbose == 1 } {
 		set verbargs " -verbose {$verbose_type on} "
+	}
+
+	set repmemargs ""
+	if { $repfiles_in_memory } {
+		set repmemargs "-rep_inmem_files "
 	}
 
 	env_cleanup $testdir
@@ -105,14 +133,14 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 	# Open a master.
 	repladd 1
 	set ma_envcmd "berkdb_env_noerr -create $m_txnargs \
-	    $m_logargs -log_max $log_max $verbargs \
+	    $m_logargs -log_max $log_max $verbargs $repmemargs \
 	    -home $masterdir -rep_transport \[list 1 replsend\]"
 	set masterenv [eval $ma_envcmd $recargs -rep_master]
 
 	# Open a client
 	repladd 2
 	set cl_envcmd "berkdb_env_noerr -create $c_txnargs \
-	    $c_logargs -log_max $log_max $verbargs \
+	    $c_logargs -log_max $log_max $verbargs $repmemargs \
 	    -home $clientdir -rep_transport \[list 2 replsend\]"
 	set clientenv [eval $cl_envcmd $recargs -rep_client]
 
@@ -125,7 +153,7 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 	# Run rep_test in the master (and update client).
 	puts "\tRep$tnum.a: Running rep_test in replicated env."
 	set start 0
-	eval rep_test $method $masterenv NULL $niter $start $start 0 0 $largs
+	eval rep_test $method $masterenv NULL $niter $start $start 0 $largs
 	incr start $niter
 	process_msgs $envlist
 
@@ -143,7 +171,7 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 		# Run rep_test in the master (don't update client).
 		puts "\tRep$tnum.c: Running rep_test in replicated env."
 	 	eval rep_test \
-		    $method $masterenv NULL $niter $start $start 0 0 $largs
+		    $method $masterenv NULL $niter $start $start 0 $largs
 		incr start $niter
 		replclear 2
 
@@ -176,7 +204,7 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 		#
 		set entries 10
 		eval rep_test \
-		    $method $masterenv NULL $entries $start $start 0 0 $largs
+		    $method $masterenv NULL $entries $start $start 0 $largs
 		incr start $entries
 		process_msgs $envlist 0 NONE err
 	}
@@ -185,7 +213,7 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 	# We have now forced an internal initialization.  Verify it is correct.
 	#
 	puts "\tRep$tnum.f: Verify logs and databases"
-	rep_verify $masterdir $masterenv $clientdir $clientenv 1
+	rep_verify $masterdir $masterenv $clientdir $clientenv 1 1 1
 
 	#
 	# Internal initializations disable certain operations on the master for
@@ -194,24 +222,35 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 	# log_archive (with removal).
 	#
 	puts "\tRep$tnum.g: Try to remove and rename the database."
-
 	set dbname "test.db"
 	set old $dbname
 	set new $dbname.new
-	set stat [catch {$masterenv dbrename -auto_commit $old $new} ret]
+	if { $databases_in_memory } {
+		set stat [catch {$masterenv dbrename -auto_commit "" $old $new} ret]
+	} else {
+		set stat [catch {$masterenv dbrename -auto_commit $old $new} ret]
+	}
 	error_check_good rename_fail $stat 1
 	error_check_good rename_err [is_substr $ret "invalid"] 1
-	set stat [catch {$masterenv dbremove -auto_commit $old} ret]
+	if { $databases_in_memory } {
+		set stat [catch {$masterenv dbremove -auto_commit "" $old} ret]
+	} else {
+		set stat [catch {$masterenv dbremove -auto_commit $old} ret]
+	}
 	error_check_good remove_fail $stat 1
 	error_check_good remove_err [is_substr $ret "invalid"] 1
 
-	puts "\tRep$tnum.h: Try to reset LSNs and fileid on the database."
-	set stat [catch {$masterenv id_reset $old} ret]
-	error_check_good id_reset $stat 1
-	error_check_good id_err [is_substr $ret "invalid"] 1
-	set stat [catch {$masterenv lsn_reset $old} ret]
-	error_check_good lsn_reset $stat 1
-	error_check_good lsn_err [is_substr $ret "invalid"] 1
+	# The fileid_reset and lsn_reset operations work on physical files 
+	# so we do not need to test them for in-memory databases.
+	if { $databases_in_memory != 1 } {
+		puts "\tRep$tnum.h: Try to reset LSNs and fileid on the database."
+		set stat [catch {$masterenv id_reset $old} ret]
+		error_check_good id_reset $stat 1
+		error_check_good id_err [is_substr $ret "invalid"] 1
+		set stat [catch {$masterenv lsn_reset $old} ret]
+		error_check_good lsn_reset $stat 1
+		error_check_good lsn_err [is_substr $ret "invalid"] 1
+	}
 
 	#
 	# Need entries big enough to generate additional log files.
@@ -220,7 +259,7 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 	#
 	puts "\tRep$tnum.i: Run rep_test to generate more logs."
 	set entries 200
-	eval rep_test $method $masterenv NULL $entries $start $start 0 0 $largs
+	eval rep_test $method $masterenv NULL $entries $start $start 0 $largs
 	incr start $entries
 	process_msgs $envlist 0 NONE err
 
@@ -233,7 +272,17 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 		set res [eval exec $util_path/db_archive -l -h $masterdir]
 		error_check_bad log.gone [lsearch -exact $res $first] -1
 
-		puts "\tRep$tnum.j.0: Try to log_archive in master env."
+		puts "\tRep$tnum.j.0: Exercise log_archive -arch_data."
+		set res [$masterenv log_archive -arch_data]
+		error_check_good arch_data [is_substr $res $dbname] 1
+
+		# Since we're doing queue extents they should be included
+		# in the results from log_archive -arch_data.
+		if { [is_queueext $method] } {
+			error_check_good arch_extent [is_substr $res "__dbq"] 1
+		}
+
+		puts "\tRep$tnum.j.1: Try to log_archive in master env."
 		set res [$masterenv log_archive -arch_remove]
 		set res [eval exec $util_path/db_archive -l -h $masterdir]
 		error_check_bad log.gone0 [lsearch -exact $res $first] -1
@@ -252,23 +301,35 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 		}
 	}
 
+	# Check that databases are in-memory or on-disk as expected, before
+	# we try to delete the databases!
+	check_db_location $masterenv
+	check_db_location $clientenv
+
 	set timeout 30
 	#
-	# Sleep timeout+2 seconds - The timeout is 60 seconds, but we need
+	# Sleep timeout+2 seconds - The timeout is 30 seconds, but we need
 	# to sleep a bit longer to make sure we cross the timeout.
 	#
 	set to [expr $timeout + 2]
 	puts "\tRep$tnum.k: Wait $to seconds to timeout"
 	tclsleep $to
 	puts "\tRep$tnum.l: Retry blocked operations after wait"
-	set stat [catch {$masterenv id_reset $old} ret]
-	error_check_good id_reset_work $stat 0
-	set stat [catch {$masterenv lsn_reset $old} ret]
-	error_check_good lsn_reset_work $stat 0
-	set stat [catch {$masterenv dbrename -auto_commit $old $new} ret]
-	error_check_good rename_work $stat 0
-	set stat [catch {$masterenv dbremove -auto_commit $new} ret]
-	error_check_good remove_work $stat 0
+	if { $databases_in_memory == 1 } {
+		set stat [catch {$masterenv dbrename -auto_commit "" $old $new} ret]
+		error_check_good rename_work $stat 0
+		set stat [catch {$masterenv dbremove -auto_commit "" $new} ret]
+		error_check_good remove_work $stat 0
+	} else {
+		set stat [catch {$masterenv id_reset $old} ret]
+		error_check_good id_reset_work $stat 0
+		set stat [catch {$masterenv lsn_reset $old} ret]
+		error_check_good lsn_reset_work $stat 0
+		set stat [catch {$masterenv dbrename -auto_commit $old $new} ret]
+		error_check_good rename_work $stat 0
+		set stat [catch {$masterenv dbremove -auto_commit $new} ret]
+		error_check_good remove_work $stat 0
+	}
 	process_msgs $envlist 0 NONE err
 
 	if { $m_logtype != "in-memory" } {
@@ -288,7 +349,7 @@ proc rep031_sub { method niter tnum logset recargs clean largs } {
 			    log.gone [lsearch -exact $res $first] -1
 		}
 	}
-
+	
 	error_check_good masterenv_close [$masterenv close] 0
 	error_check_good clientenv_close [$clientenv close] 0
 	replclose $testdir/MSGQUEUEDIR

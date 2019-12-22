@@ -1,5 +1,9 @@
 /*
- * $Id: b_curalloc.c,v 1.9 2007/12/21 13:58:30 bostic Exp $
+ * See the file LICENSE for redistribution information.
+ *
+ * Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
+ *
+ * $Id$
  */
 #include "bench.h"
 
@@ -34,7 +38,7 @@ b_curalloc(int argc, char *argv[])
 	DB_BENCH_ASSERT(db_create(&dbp, NULL, 0) == 0);
 	dbp->set_errfile(dbp, stderr);
 
-#if DB_VERSION_MAJOR >= 4 && DB_VERSION_MINOR >= 1
+#if DB_VERSION_MAJOR > 4 || (DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 1)
 	DB_BENCH_ASSERT(dbp->open(
 	    dbp, NULL, TESTFILE, NULL, DB_BTREE, DB_CREATE, 0666) == 0);
 #else

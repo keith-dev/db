@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: mp_fopen.c,v 12.50 2008/01/31 18:40:45 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -76,7 +76,8 @@ __memp_fopen_pp(dbmfp, path, flags, mode, pagesize)
 
 	ENV_ENTER(env, ip);
 	REPLICATION_WRAP(env,
-	    (__memp_fopen(dbmfp, NULL, path, flags, mode, pagesize)), 0, ret);
+	    (__memp_fopen(dbmfp, NULL,
+	    path, NULL, flags, mode, pagesize)), 0, ret);
 	ENV_LEAVE(env, ip);
 	return (ret);
 }
@@ -85,14 +86,15 @@ __memp_fopen_pp(dbmfp, path, flags, mode, pagesize)
  * __memp_fopen --
  *	DB_MPOOLFILE->open.
  *
- * PUBLIC: int __memp_fopen __P((DB_MPOOLFILE *,
- * PUBLIC:     MPOOLFILE *, const char *, u_int32_t, int, size_t));
+ * PUBLIC: int __memp_fopen __P((DB_MPOOLFILE *, MPOOLFILE *,
+ * PUBLIC:     const char *, const char **, u_int32_t, int, size_t));
  */
 int
-__memp_fopen(dbmfp, mfp, path, flags, mode, pgsize)
+__memp_fopen(dbmfp, mfp, path, dirp, flags, mode, pgsize)
 	DB_MPOOLFILE *dbmfp;
 	MPOOLFILE *mfp;
 	const char *path;
+	const char **dirp;
 	u_int32_t flags;
 	int mode;
 	size_t pgsize;
@@ -250,7 +252,7 @@ __memp_fopen(dbmfp, mfp, path, flags, mode, pgsize)
 			path = R_ADDR(dbmp->reginfo, mfp->path_off);
 		}
 		if ((ret = __db_appname(env,
-		     DB_APP_DATA, path, 0, NULL, &rpath)) == 0)
+		     DB_APP_DATA, path, dirp, &rpath)) == 0)
 			ret = __os_open(env, rpath,
 			     (u_int32_t)pagesize, oflags, mode, &dbmfp->fhp);
 		if (mfp != NULL)
@@ -268,18 +270,7 @@ __memp_fopen(dbmfp, mfp, path, flags, mode, pgsize)
 		     DB_MUTEX_PROCESS_ONLY, &dbmfp->fhp->mtx_fh)) != 0)
 			goto err;
 
-		/*
-		 * Figure out the file's size.
-		 *
-		 * !!!
-		 * We can't use off_t's here, or in any code in the mainline
-		 * library for that matter.  (We have to use them in the
-		 * os stubs, of course, as there are system calls that
-		 * take them as arguments.)  The reason is some customers
-		 * build in environments where an off_t is 32-bits, but
-		 * still run where offsets are 64-bits, and they pay us
-		 * a lot of money.
-		 */
+		/* Figure out the file's size. */
 		if ((ret = __os_ioinfo(
 		    env, rpath, dbmfp->fhp, &mbytes, &bytes, NULL)) != 0) {
 			__db_err(env, ret, "%s", rpath);
@@ -360,7 +351,7 @@ check:	MUTEX_LOCK(env, hp->mtx_hash);
 		if ((dbmfp->clear_len != DB_CLEARLEN_NOTSET &&
 		    mfp->clear_len != DB_CLEARLEN_NOTSET &&
 		    dbmfp->clear_len != mfp->clear_len) ||
-		    (pagesize != 0 && pagesize != mfp->stat.st_pagesize) ||
+		    (pagesize != 0 && pagesize != mfp->pagesize) ||
 		    (dbmfp->lsn_offset != DB_LSN_OFF_NOTSET &&
 		    mfp->lsn_off != DB_LSN_OFF_NOTSET &&
 		    dbmfp->lsn_offset != mfp->lsn_off)) {
@@ -376,7 +367,7 @@ check:	MUTEX_LOCK(env, hp->mtx_hash);
 	MUTEX_UNLOCK(env, hp->mtx_hash);
 	if (alloc_mfp != NULL) {
 		MUTEX_LOCK(env, alloc_mfp->mutex);
-		if ((ret = __memp_mf_discard(dbmp, alloc_mfp)) != 0)
+		if ((ret = __memp_mf_discard(dbmp, alloc_mfp, 0)) != 0)
 			goto err;
 	}
 
@@ -442,7 +433,7 @@ have_mfp:
 	 */
 	if (!LF_ISSET(DB_DURABLE_UNKNOWN | DB_RDONLY)) {
 		if (F_ISSET(mfp, MP_DURABLE_UNKNOWN)) {
-			if (LF_ISSET(MP_NOT_DURABLE))
+			if (LF_ISSET(DB_TXN_NOT_DURABLE))
 				F_SET(mfp, MP_NOT_DURABLE);
 			F_CLR(mfp, MP_DURABLE_UNKNOWN);
 		} else if (!LF_ISSET(DB_TXN_NOT_DURABLE) !=
@@ -685,16 +676,16 @@ __memp_mpf_alloc(dbmp, dbmfp, path, pagesize, flags, retmfp)
 	memset(mfp, 0, sizeof(MPOOLFILE));
 	mfp->mpf_cnt = 1;
 	mfp->ftype = dbmfp->ftype;
-	mfp->stat.st_pagesize = pagesize;
+	mfp->pagesize = pagesize;
 	mfp->lsn_off = dbmfp->lsn_offset;
 	mfp->clear_len = dbmfp->clear_len;
 	mfp->priority = dbmfp->priority;
 	if (dbmfp->gbytes != 0 || dbmfp->bytes != 0) {
 		mfp->maxpgno = (db_pgno_t)
-		    (dbmfp->gbytes * (GIGABYTE / mfp->stat.st_pagesize));
+		    (dbmfp->gbytes * (GIGABYTE / mfp->pagesize));
 		mfp->maxpgno += (db_pgno_t)
-		    ((dbmfp->bytes + mfp->stat.st_pagesize - 1) /
-		    mfp->stat.st_pagesize);
+		    ((dbmfp->bytes + mfp->pagesize - 1) /
+		    mfp->pagesize);
 	}
 	if (FLD_ISSET(dbmfp->config_flags, DB_MPOOL_NOFILE))
 		mfp->no_backing_file = 1;
@@ -898,9 +889,9 @@ __memp_fclose(dbmfp, flags)
 			mfp->deadfile = 1;
 		}
 		if (mfp->unlink_on_close) {
-			if ((t_ret = __db_appname(dbmp->env,
-			    DB_APP_DATA, R_ADDR(dbmp->reginfo,
-			    mfp->path_off), 0, NULL, &rpath)) != 0 && ret == 0)
+			if ((t_ret = __db_appname(dbmp->env, DB_APP_DATA,
+			    R_ADDR(dbmp->reginfo, mfp->path_off), NULL,
+			    &rpath)) != 0 && ret == 0)
 				ret = t_ret;
 			if (t_ret == 0) {
 				if ((t_ret = __os_unlink(
@@ -908,6 +899,10 @@ __memp_fclose(dbmfp, flags)
 					ret = t_ret;
 				__os_free(env, rpath);
 			}
+		}
+		if (mfp->mpf_cnt == 0) {
+			F_CLR(mfp, MP_NOT_DURABLE);
+			F_SET(mfp, MP_DURABLE_UNKNOWN);
 		}
 		if (mfp->block_cnt == 0) {
 			/*
@@ -917,7 +912,7 @@ __memp_fclose(dbmfp, flags)
 			 */
 			DB_ASSERT(env, !LF_ISSET(DB_MPOOL_NOLOCK));
 			if ((t_ret =
-			    __memp_mf_discard(dbmp, mfp)) != 0 && ret == 0)
+			    __memp_mf_discard(dbmp, mfp, 0)) != 0 && ret == 0)
 				ret = t_ret;
 			deleted = 1;
 		}
@@ -939,12 +934,13 @@ done:	/* Discard the DB_MPOOLFILE structure. */
  * __memp_mf_discard --
  *	Discard an MPOOLFILE.
  *
- * PUBLIC: int __memp_mf_discard __P((DB_MPOOL *, MPOOLFILE *));
+ * PUBLIC: int __memp_mf_discard __P((DB_MPOOL *, MPOOLFILE *, int));
  */
 int
-__memp_mf_discard(dbmp, mfp)
+__memp_mf_discard(dbmp, mfp, hp_locked)
 	DB_MPOOL *dbmp;
 	MPOOLFILE *mfp;
+	int hp_locked;
 {
 	DB_MPOOL_HASH *hp;
 	ENV *env;
@@ -969,8 +965,8 @@ __memp_mf_discard(dbmp, mfp)
 	 * calls mpool sync, the sync code won't know anything about them.
 	 * Ignore files not written, discarded, or only temporary.
 	 */
-	need_sync =
-	   mfp->file_written && !mfp->deadfile && !F_ISSET(mfp, MP_TEMP);
+	need_sync = mfp->file_written && !mfp->deadfile &&
+	    !F_ISSET(mfp, MP_TEMP) && !mfp->no_backing_file;
 
 	/*
 	 * We have to release the MPOOLFILE mutex before acquiring the region
@@ -984,10 +980,16 @@ __memp_mf_discard(dbmp, mfp)
 	if ((t_ret = __mutex_free(env, &mfp->mutex)) != 0 && ret == 0)
 		ret = t_ret;
 
-	/* Lock the bucket and delete from the list of MPOOLFILEs. */
-	MUTEX_LOCK(env, hp->mtx_hash);
+	/*
+	 * Lock the bucket and delete from the list of MPOOLFILEs.
+	 * If this function is called by __memp_discard_all_mpfs,
+	 * the MPOOLFILE hash bucket is already locked.
+	 */
+	if (!hp_locked)
+		MUTEX_LOCK(env, hp->mtx_hash);
 	SH_TAILQ_REMOVE(&hp->hash_bucket, mfp, q, __mpoolfile);
-	MUTEX_UNLOCK(env, hp->mtx_hash);
+	if (!hp_locked)
+		MUTEX_UNLOCK(env, hp->mtx_hash);
 
 	/* Lock the region and collect stats and free the space. */
 	MPOOL_SYSTEM_LOCK(env);
@@ -1008,15 +1010,15 @@ __memp_mf_discard(dbmp, mfp)
 
 	/* Free the space. */
 	if (mfp->path_off != 0)
-		__memp_free(&dbmp->reginfo[0], NULL,
+		__memp_free(&dbmp->reginfo[0],
 		    R_ADDR(dbmp->reginfo, mfp->path_off));
 	if (mfp->fileid_off != 0)
-		__memp_free(&dbmp->reginfo[0], NULL,
+		__memp_free(&dbmp->reginfo[0],
 		    R_ADDR(dbmp->reginfo, mfp->fileid_off));
 	if (mfp->pgcookie_off != 0)
-		__memp_free(&dbmp->reginfo[0], NULL,
+		__memp_free(&dbmp->reginfo[0],
 		    R_ADDR(dbmp->reginfo, mfp->pgcookie_off));
-	__memp_free(&dbmp->reginfo[0], NULL, mfp);
+	__memp_free(&dbmp->reginfo[0], mfp);
 
 	MPOOL_SYSTEM_UNLOCK(env);
 

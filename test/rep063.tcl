@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 2002,2008 Oracle.  All rights reserved.
+# Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: rep063.tcl,v 1.15 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST  rep063
 # TEST	Replication election test with simulated different versions
@@ -17,10 +17,9 @@
 #
 proc rep063 { method args } {
 	source ./include.tcl
-	if { $is_windows9x_test == 1 } {
-		puts "Skipping replication test on Win 9x platform."
-		return
-	}
+	global databases_in_memory
+	global repfiles_in_memory
+
 	set tnum "063"
 
 	# Skip for all methods except btree.
@@ -34,7 +33,23 @@ proc rep063 { method args } {
 	}
 
 	set nclients 5
-	set logsets [create_logsets [expr $nclients + 1]]
+ 	set logsets [create_logsets [expr $nclients + 1]]
+
+	# Set up for on-disk or in-memory databases.
+	set msg "using on-disk databases"
+	if { $databases_in_memory } {
+		set msg "using named in-memory databases"
+		if { [is_queueext $method] } { 
+			puts -nonewline "Skipping rep$tnum for method "
+			puts "$method with named in-memory databases."
+			return
+		}
+	}
+
+	set msg2 "and on-disk replication files"
+	if { $repfiles_in_memory } {
+		set msg2 "and in-memory replication files"
+	}
 
 	# Run the body of the test with and without recovery.
 	set recopts { "" "-recover" }
@@ -46,8 +61,8 @@ proc rep063 { method args } {
 				    for in-memory logs with -recover."
 				continue
 			}
-			puts "Rep$tnum ($method $r): \
-			    Replication elections with varying versions."
+			puts "Rep$tnum ($method $r): Replication\
+			    elections with varying versions $msg $msg2."
 			puts "Rep$tnum: Master logs are [lindex $l 0]"
 			for { set i 0 } { $i < $nclients } { incr i } {
 				puts "Rep$tnum: Client $i logs are\
@@ -61,12 +76,19 @@ proc rep063 { method args } {
 proc rep063_sub { method nclients tnum logset recargs largs } {
 	source ./include.tcl
 	global electable_pri
+	global databases_in_memory
+	global repfiles_in_memory
 	global rep_verbose
 	global verbose_type
 
 	set verbargs ""
 	if { $rep_verbose == 1 } {
 		set verbargs " -verbose {$verbose_type on} "
+	}
+
+	set repmemargs ""
+	if { $repfiles_in_memory } {
+		set repmemargs "-rep_inmem_files "
 	}
 
 	set niter 80
@@ -95,7 +117,7 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 	set envlist {}
 	repladd 1
 	set env_cmd(M) "berkdb_env_noerr -create -log_max 1000000 \
-	    -event rep_event \
+	    -event $repmemargs \
 	    -home $masterdir $m_txnargs $m_logargs -rep_master $verbargs \
 	    -errpfx MASTER -rep_transport \[list 1 replsend\]"
 	set masterenv [eval $env_cmd(M) $recargs]
@@ -107,7 +129,7 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 		set envid [expr $i + 2]
 		repladd $envid
 		set env_cmd($i) "berkdb_env_noerr -create -home $clientdir($i) \
-		    -event rep_event \
+		    -event $repmemargs \
 		    $c_txnargs($i) $c_logargs($i) -rep_client \
 		    -rep_transport \[list $envid replsend\]"
 		set clientenv($i) [eval $env_cmd($i) $recargs]
@@ -120,7 +142,7 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 
 	# Run a modified test001 in the master.
 	puts "\tRep$tnum.a: Running rep_test in replicated env."
-	eval rep_test $method $masterenv NULL $niter 0 0 0 0 $largs
+	eval rep_test $method $masterenv NULL $niter 0 0 0 $largs
 	process_msgs $envlist
 
 	#
@@ -141,7 +163,7 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 	set orig_env $envlist
 	set envlist [lreplace $envlist 3 3]
 	set envlist [lreplace $envlist 2 2]
-	eval rep_test $method $masterenv NULL $niter 0 0 0 0 $largs
+	eval rep_test $method $masterenv NULL $niter 0 0 0 $largs
 	process_msgs $envlist
 	#
 	# Remove client 3 so that client 4 has the biggest LSN of all.
@@ -149,7 +171,7 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 	set eend [llength $envlist]
 	set cl3_i [expr $eend - 2]
 	set envlist [lreplace $envlist $cl3_i $cl3_i]
-	eval rep_test $method $masterenv NULL $niter 0 0 0 0 $largs
+	eval rep_test $method $masterenv NULL $niter 0 0 0 $largs
 	process_msgs $envlist
 	#
 	# Put all removed clients back in.
@@ -204,8 +226,16 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 	set winner 1
 	set elector 2
 	setpriority pri $nclients $winner 0 1
-	run_election env_cmd envlist err_cmd pri crash\
-	    $qdir $m $elector $nsites $nvotes $nclients $winner 0 test.db
+
+	# Set up databases as in-memory or on-disk and run the election.
+	if { $databases_in_memory } {
+		set dbname { "" "test.db" }
+	} else { 
+		set dbname "test.db"
+	} 
+	run_election envlist err_cmd pri crash\
+	    $qdir $m $elector $nsites $nvotes $nclients $winner 0 $dbname
+
 	#
 	# In all of the checks of the Election Priority stat field,
 	# we use clientenv(2).  The reason is that we never expect
@@ -232,8 +262,8 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 	set winner 0
 	setpriority pri $nclients $winner 0 1
 	set pri(1) 0
-	run_election env_cmd envlist err_cmd pri crash $qdir \
-	    $m $elector $nsites $nvotes $nclients $winner 0 test.db
+	run_election envlist err_cmd pri crash $qdir \
+	    $m $elector $nsites $nvotes $nclients $winner 0 $dbname
 	error_check_bad old_pri [stat_field $clientenv(2) rep_stat \
 	    "Election priority"] 0
 	rep063_movelsn_reopen $method envlist $env_cmd($winner) $winner $largs
@@ -251,8 +281,8 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 	set winner 1
 	setpriority pri $nclients $winner 0 1
 	set pri(2) [expr $pri(1) / 2]
-	run_election env_cmd envlist err_cmd pri crash $qdir \
-	    $m $elector $nsites $nvotes $nclients $winner 0 test.db
+	run_election envlist err_cmd pri crash $qdir \
+	    $m $elector $nsites $nvotes $nclients $winner 0 $dbname
 	error_check_bad old_pri [stat_field $clientenv(2) rep_stat \
 	    "Election priority"] 0
 	rep063_movelsn_reopen $method envlist $env_cmd($winner) $winner $largs
@@ -280,8 +310,8 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 	#
 	# Winner should be zero priority.
 	#
-	run_election env_cmd envlist err_cmd pri crash $qdir \
-	    $m $elector $nsites $nvotes $nclients $winner 0 test.db
+	run_election envlist err_cmd pri crash $qdir \
+	    $m $elector $nsites $nvotes $nclients $winner 0 $dbname
 	error_check_good elect_pri [stat_field $clientenv(2) rep_stat \
 	    "Election priority"] 0
 	rep063_movelsn_reopen $method envlist $env_cmd($winner) $winner $largs
@@ -307,8 +337,8 @@ proc rep063_sub { method nclients tnum logset recargs largs } {
 	# Client 4 has biggest LSN and should now win, but winner should
 	# be zero priority.
 	#
-	run_election env_cmd envlist err_cmd pri crash $qdir \
-	    $m $elector $nsites $nvotes $nclients $winner 0 test.db
+	run_election envlist err_cmd pri crash $qdir \
+	    $m $elector $nsites $nvotes $nclients $winner 0 $dbname
 	error_check_good elect_pri [stat_field $clientenv(2) rep_stat \
 	    "Election priority"] 0
 
@@ -346,7 +376,7 @@ proc rep063_movelsn_reopen { method envlist env_cmd eindex largs } {
 	# Move this env's LSN ahead.
 	#
 	set niter 10
-	eval rep_test $method $masterenv NULL $niter 0 0 0 0 $largs
+	eval rep_test $method $masterenv NULL $niter 0 0 0 $largs
 
 	foreach cl $clrlist {
 		replclear $cl

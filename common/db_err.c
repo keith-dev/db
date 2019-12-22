@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: db_err.c,v 12.72 2008/03/12 19:11:53 mbrey Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -12,7 +12,6 @@
 #include "dbinc/db_page.h"
 #include "dbinc/db_am.h"
 #include "dbinc/lock.h"
-#include "dbinc/log.h"
 #include "dbinc/mp.h"
 #include "dbinc/txn.h"
 
@@ -165,7 +164,16 @@ __env_panic_msg(env)
 
 	if (dbenv->db_paniccall != NULL)		/* Deprecated */
 		dbenv->db_paniccall(dbenv, ret);
-	DB_EVENT(env, DB_EVENT_PANIC, &ret);
+
+	/* Must check for DB_EVENT_REG_PANIC panic first because it is never
+	 * set by itself.  If set, it means panic came from DB_REGISTER code
+	 * only, otherwise it could be from many possible places in the code.
+	 */
+	if ((env->reginfo != NULL) &&
+	    (((REGENV *)env->reginfo->primary)->reg_panic))
+		DB_EVENT(env, DB_EVENT_REG_PANIC, &ret);
+	else
+		DB_EVENT(env, DB_EVENT_PANIC, &ret);
 
 	return (ret);
 }
@@ -192,7 +200,17 @@ __env_panic(env, errval)
 
 		if (dbenv->db_paniccall != NULL)	/* Deprecated */
 			dbenv->db_paniccall(dbenv, errval);
-		DB_EVENT(env, DB_EVENT_PANIC, &errval);
+
+		/* Must check for DB_EVENT_REG_PANIC first because it is never
+		 * set by itself.  If set, it means panic came from DB_REGISTER
+		 * code only, otherwise it could be from many possible places
+		 * in the code.
+		 */
+		if ((env->reginfo != NULL) &&
+		    (((REGENV *)env->reginfo->primary)->reg_panic))
+			DB_EVENT(env, DB_EVENT_REG_PANIC, &errval);
+		else
+			DB_EVENT(env, DB_EVENT_PANIC, &errval);
 	}
 
 #if defined(DIAGNOSTIC) && !defined(CONFIG_TEST)
@@ -262,6 +280,8 @@ db_strerror(error)
 		return ("DB_LOCK_NOTGRANTED: Lock not granted");
 	case DB_LOG_BUFFER_FULL:
 		return ("DB_LOG_BUFFER_FULL: In-memory log buffer is full");
+	case DB_LOG_VERIFY_BAD:
+		return ("DB_LOG_VERIFY_BAD: Log verification failed");
 	case DB_NOSERVER:
 		return ("DB_NOSERVER: Fatal error, no RPC server");
 	case DB_NOSERVER_HOME:
@@ -281,7 +301,7 @@ db_strerror(error)
 	case DB_REP_HOLDELECTION:
 		return ("DB_REP_HOLDELECTION: Need to hold an election");
 	case DB_REP_IGNORE:
-		return ("DB_REP_IGNORE: Replication record ignored");
+		return ("DB_REP_IGNORE: Replication record/operation ignored");
 	case DB_REP_ISPERM:
 		return ("DB_REP_ISPERM: Permanent record written");
 	case DB_REP_JOIN_FAILURE:
@@ -304,6 +324,8 @@ db_strerror(error)
 	case DB_SECONDARY_BAD:
 		return
 	    ("DB_SECONDARY_BAD: Secondary index inconsistent with primary");
+	case DB_TIMEOUT:
+		return ("DB_TIMEOUT: Operation timed out");
 	case DB_VERIFY_BAD:
 		return ("DB_VERIFY_BAD: Database verification failed");
 	case DB_VERSION_MISMATCH:
@@ -592,6 +614,36 @@ __db_msg(env, fmt, va_alist)
 }
 
 /*
+ * __db_repmsg --
+ *	Replication system message routine.
+ *
+ * PUBLIC: void __db_repmsg __P((const ENV *, const char *, ...))
+ * PUBLIC:    __attribute__ ((__format__ (__printf__, 2, 3)));
+ */
+void
+#ifdef STDC_HEADERS
+__db_repmsg(const ENV *env, const char *fmt, ...)
+#else
+__db_repmsg(env, fmt, va_alist)
+	const ENV *env;
+	const char *fmt;
+	va_dcl
+#endif
+{
+	va_list ap;
+	char buf[2048];		/* !!!: END OF THE STACK DON'T TRUST SPRINTF. */
+
+#ifdef STDC_HEADERS
+	va_start(ap, fmt);
+#else
+	va_start(ap);
+#endif
+	(void)vsnprintf(buf, sizeof(buf), fmt, ap);
+	__rep_msg(env, buf);
+	va_end(ap);
+}
+
+/*
  * __db_msgcall --
  *	Do the message work for callback functions.
  */
@@ -703,7 +755,7 @@ __db_check_txn(dbp, txn, assoc_locker, read_op)
 	int read_op;
 {
 	ENV *env;
-	int isp, ret;
+	int related, ret;
 
 	env = dbp->env;
 
@@ -724,7 +776,11 @@ __db_check_txn(dbp, txn, assoc_locker, read_op)
 	 *	a transaction handle in a non-transactional environment
 	 *	a transaction handle for a non-transactional database
 	 */
-	if (txn == NULL || F_ISSET(txn, TXN_PRIVATE)) {
+	if (!read_op && txn != NULL && F_ISSET(txn, TXN_READONLY)) {
+		__db_errx(env,
+		    "Read-only transaction cannot be used for an update");
+		return (EINVAL);
+	} else if (txn == NULL || F_ISSET(txn, TXN_PRIVATE)) {
 		if (dbp->cur_locker != NULL &&
 		    dbp->cur_locker->id >= TXN_MINIMUM)
 			goto open_err;
@@ -734,15 +790,10 @@ __db_check_txn(dbp, txn, assoc_locker, read_op)
 		    "Transaction not specified for a transactional database");
 			return (EINVAL);
 		}
-	} else if (F_ISSET(txn, TXN_CDSGROUP)) {
-		if (!CDB_LOCKING(env)) {
-			__db_errx(env,
-			    "CDS groups can only be used in a CDS environment");
-			return (EINVAL);
-		}
+	} else if (F_ISSET(txn, TXN_FAMILY)) {
 		/*
-		 * CDS group handles can be passed to any method, since they
-		 * only determine locker IDs.
+		 * Family transaction handles can be passed to any method,
+		 * since they only determine locker IDs.
 		 */
 		return (0);
 	} else {
@@ -757,13 +808,14 @@ __db_check_txn(dbp, txn, assoc_locker, read_op)
 
 		if (F_ISSET(txn, TXN_DEADLOCK))
 			return (__db_txn_deadlock_err(env, txn));
+
 		if (dbp->cur_locker != NULL &&
 		    dbp->cur_locker->id >= TXN_MINIMUM &&
 		     dbp->cur_locker->id != txn->txnid) {
-			if ((ret = __lock_locker_is_parent(env,
-			     dbp->cur_locker, txn->locker, &isp)) != 0)
+			if ((ret = __lock_locker_same_family(env,
+			     dbp->cur_locker, txn->locker, &related)) != 0)
 				return (ret);
-			if (!isp)
+			if (!related)
 				goto open_err;
 		}
 	}

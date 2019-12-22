@@ -4,7 +4,7 @@
  *
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 
 package com.sleepycat.db;
@@ -207,47 +207,47 @@ was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfi
         return bt_free;
     }
 
-    private int bt_int_pgfree;
+    private long bt_int_pgfree;
     /**
     The number of bytes free in database internal pages.
 <p>
 The information is only included if the {@link com.sleepycat.db.Database#getStats Database.getStats} call
 was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfig.setFast} method.
     */
-    public int getIntPagesFree() {
+    public long getIntPagesFree() {
         return bt_int_pgfree;
     }
 
-    private int bt_leaf_pgfree;
+    private long bt_leaf_pgfree;
     /**
     The number of bytes free in database leaf pages.
 <p>
 The information is only included if the {@link com.sleepycat.db.Database#getStats Database.getStats} call
 was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfig.setFast} method.
     */
-    public int getLeafPagesFree() {
+    public long getLeafPagesFree() {
         return bt_leaf_pgfree;
     }
 
-    private int bt_dup_pgfree;
+    private long bt_dup_pgfree;
     /**
     The number of bytes free in database duplicate pages.
 <p>
 The information is only included if the {@link com.sleepycat.db.Database#getStats Database.getStats} call
 was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfig.setFast} method.
     */
-    public int getDupPagesFree() {
+    public long getDupPagesFree() {
         return bt_dup_pgfree;
     }
 
-    private int bt_over_pgfree;
+    private long bt_over_pgfree;
     /**
     The number of bytes free in database overflow pages.
 <p>
 The information is only included if the {@link com.sleepycat.db.Database#getStats Database.getStats} call
 was not configured by the {@link com.sleepycat.db.StatsConfig#setFast StatsConfig.setFast} method.
     */
-    public int getOverPagesFree() {
+    public long getOverPagesFree() {
         return bt_over_pgfree;
     }
 

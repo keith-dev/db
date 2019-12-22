@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1997, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: cxx_env.cpp,v 12.48 2008/01/12 13:42:35 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -320,8 +320,16 @@ DbEnv::~DbEnv()
 {
 	DB_ENV *dbenv = unwrap(this);
 
+	/* 
+	 * Specify DB_FORCESYNC to make sure databases are sync'ed to disk.
+	 * Users can call DbEnv::close with 0 as real parameter to close all
+	 * but the last environment object/handle. Doing so can avoid
+	 * unnecessary database syncs. The last environment object/handle
+	 * must be closed with DB_FORCESYNC parameter, or be closed via this
+	 * function.
+	 */
 	if (dbenv != NULL) {
-		(void)dbenv->close(dbenv, 0);
+		(void)dbenv->close(dbenv, DB_FORCESYNC);
 		cleanup();
 	}
 }
@@ -435,7 +443,7 @@ int DbEnv::initialize(DB_ENV *dbenv)
 DBENV_METHOD(lock_detect, (u_int32_t flags, u_int32_t atype, int *aborted),
     (dbenv, flags, atype, aborted))
 DBENV_METHOD_ERR(lock_get,
-    (u_int32_t locker, u_int32_t flags, const Dbt *obj,
+    (u_int32_t locker, u_int32_t flags, Dbt *obj,
     db_lockmode_t lock_mode, DbLock *lock),
     (dbenv, locker, flags, obj, lock_mode, &lock->lock_),
     DbEnv::runtime_error_lock_get(this, "DbEnv::lock_get", ret,
@@ -454,7 +462,7 @@ DBENV_METHOD_ERR(lock_vec,
     DbEnv::runtime_error_lock_get(this, "DbEnv::lock_vec", ret,
 	(*elist_returned)->op, (*elist_returned)->mode,
 	Dbt::get_Dbt((*elist_returned)->obj), DbLock((*elist_returned)->lock),
-	(*elist_returned) - list, error_policy()))
+	(int)((*elist_returned) - list), error_policy()))
 // log methods
 DBENV_METHOD(log_archive, (char **list[], u_int32_t flags),
     (dbenv, list, flags))
@@ -493,6 +501,14 @@ DBENV_METHOD(log_set_config, (u_int32_t which, int onoff),
 DBENV_METHOD(log_stat, (DB_LOG_STAT **spp, u_int32_t flags),
     (dbenv, spp, flags))
 DBENV_METHOD(log_stat_print, (u_int32_t flags), (dbenv, flags))
+
+int DbEnv::log_verify(DB_LOG_VERIFY_CONFIG *config)
+{
+	DB_ENV *dbenv = unwrap(this);
+
+	// Simply return the error, don't throw exceptions.
+	return dbenv->log_verify(dbenv, config);
+}
 
 DBENV_METHOD(lsn_reset, (const char *file, u_int32_t flags),
     (dbenv, file, flags))
@@ -637,7 +653,7 @@ void DbEnv::runtime_error_dbt(DbEnv *dbenv,
 // call regular runtime_error if it
 void DbEnv::runtime_error_lock_get(DbEnv *dbenv,
     const char *caller, int error,
-    db_lockop_t op, db_lockmode_t mode, const Dbt *obj,
+    db_lockop_t op, db_lockmode_t mode, Dbt *obj,
     DbLock lock, int index, int error_policy)
 {
 	if (error != DB_LOCK_NOTGRANTED) {
@@ -743,6 +759,10 @@ DBENV_METHOD(set_lk_max_locks, (u_int32_t max_locks), (dbenv, max_locks))
 DBENV_METHOD(get_lk_max_objects, (u_int32_t *max_objectsp),
     (dbenv, max_objectsp))
 DBENV_METHOD(set_lk_max_objects, (u_int32_t max_objects), (dbenv, max_objects))
+DBENV_METHOD(get_lk_partitions, (u_int32_t *partitionsp), (dbenv, partitionsp))
+DBENV_METHOD(set_lk_partitions, (u_int32_t partitions), (dbenv, partitions))
+DBENV_METHOD(get_lk_priority, (u_int32_t lockerid, u_int32_t *priorityp), (dbenv, lockerid, priorityp))
+DBENV_METHOD(set_lk_priority, (u_int32_t lockerid, u_int32_t priority), (dbenv, lockerid, priority))
 DBENV_METHOD(get_mp_max_openfd, (int *maxopenfdp), (dbenv, maxopenfdp))
 DBENV_METHOD(set_mp_max_openfd, (int maxopenfd), (dbenv, maxopenfd))
 DBENV_METHOD(get_mp_max_write, (int *maxwritep, db_timeout_t *maxwrite_sleepp),
@@ -751,6 +771,10 @@ DBENV_METHOD(set_mp_max_write, (int maxwrite, db_timeout_t maxwrite_sleep),
     (dbenv, maxwrite, maxwrite_sleep))
 DBENV_METHOD(get_mp_mmapsize, (size_t *mmapsizep), (dbenv, mmapsizep))
 DBENV_METHOD(set_mp_mmapsize, (size_t mmapsize), (dbenv, mmapsize))
+DBENV_METHOD(get_mp_pagesize, (u_int32_t *pagesizep), (dbenv, pagesizep))
+DBENV_METHOD(set_mp_pagesize, (u_int32_t pagesize), (dbenv, pagesize))
+DBENV_METHOD(get_mp_tablesize, (u_int32_t *tablesizep), (dbenv, tablesizep))
+DBENV_METHOD(set_mp_tablesize, (u_int32_t tablesize), (dbenv, tablesize))
 DBENV_METHOD_VOID(get_msgfile, (FILE **msgfilep), (dbenv, msgfilep))
 DBENV_METHOD_VOID(set_msgfile, (FILE *msgfile), (dbenv, msgfile))
 DBENV_METHOD(get_tmp_dir, (const char **tmp_dirp), (dbenv, tmp_dirp))
@@ -759,6 +783,11 @@ DBENV_METHOD(get_tx_max, (u_int32_t *tx_maxp), (dbenv, tx_maxp))
 DBENV_METHOD(set_tx_max, (u_int32_t tx_max), (dbenv, tx_max))
 
 DBENV_METHOD(stat_print, (u_int32_t flags), (dbenv, flags))
+
+DBENV_METHOD_QUIET(get_alloc,
+    (db_malloc_fcn_type *malloc_fcnp, db_realloc_fcn_type *realloc_fcnp,
+    db_free_fcn_type *free_fcnp),
+    (dbenv, malloc_fcnp, realloc_fcnp, free_fcnp))
 
 DBENV_METHOD_QUIET(set_alloc,
     (db_malloc_fcn_type malloc_fcn, db_realloc_fcn_type realloc_fcn,
@@ -780,6 +809,15 @@ DBENV_METHOD(get_cache_max, (u_int32_t *gbytesp, u_int32_t *bytesp),
     (dbenv, gbytesp, bytesp))
 DBENV_METHOD(set_cache_max, (u_int32_t gbytes, u_int32_t bytes),
     (dbenv, gbytes, bytes))
+DBENV_METHOD(get_create_dir, (const char **dirp), (dbenv, dirp))
+DBENV_METHOD(set_create_dir, (const char *dir), (dbenv, dir))
+
+void DbEnv::get_errcall(void (**argp)(const DbEnv *, const char *, const char *))
+{
+	if (argp != NULL)
+		*argp = error_callback_;
+	return;
+}
 
 void DbEnv::set_errcall(void (*arg)(const DbEnv *, const char *, const char *))
 {
@@ -808,6 +846,13 @@ void DbEnv::set_error_stream(__DB_STD(ostream) *stream)
 			   _stream_error_function_c);
 }
 
+int DbEnv::get_feedback(void (**argp)(DbEnv *, int, int))
+{
+	if (argp != NULL)
+		*argp = feedback_callback_;
+	return 0;
+}
+
 int DbEnv::set_feedback(void (*arg)(DbEnv *, int, int))
 {
 	DB_ENV *dbenv = unwrap(this);
@@ -820,6 +865,12 @@ int DbEnv::set_feedback(void (*arg)(DbEnv *, int, int))
 
 DBENV_METHOD(get_flags, (u_int32_t *flagsp), (dbenv, flagsp))
 DBENV_METHOD(set_flags, (u_int32_t flags, int onoff), (dbenv, flags, onoff))
+
+void DbEnv::get_msgcall(void (**argp)(const DbEnv *, const char *))
+{
+	if (argp != NULL)
+		*argp = message_callback_;
+}
 
 void DbEnv::set_msgcall(void (*arg)(const DbEnv *, const char *))
 {
@@ -874,6 +925,14 @@ DBENV_METHOD(set_rpc_server,
 DBENV_METHOD(get_shm_key, (long *shm_keyp), (dbenv, shm_keyp))
 DBENV_METHOD(set_shm_key, (long shm_key), (dbenv, shm_key))
 
+int DbEnv::get_app_dispatch
+    (int (**argp)(DbEnv *, Dbt *, DbLsn *, db_recops))
+{
+	if (argp != NULL)
+		*argp = app_dispatch_callback_;
+	return 0;
+}
+
 int DbEnv::set_app_dispatch
     (int (*arg)(DbEnv *, Dbt *, DbLsn *, db_recops))
 {
@@ -886,6 +945,14 @@ int DbEnv::set_app_dispatch
 		DB_ERROR(this, "DbEnv::set_app_dispatch", ret, error_policy());
 
 	return (ret);
+}
+
+int DbEnv::get_isalive
+    (int (**argp)(DbEnv *, pid_t, db_threadid_t, u_int32_t))
+{
+	if (argp != NULL)
+		*argp = isalive_callback_;
+	return 0;
 }
 
 int DbEnv::set_isalive
@@ -925,6 +992,13 @@ DBENV_METHOD(mutex_stat,
 DBENV_METHOD(mutex_stat_print, (u_int32_t flags), (dbenv, flags))
 DBENV_METHOD(mutex_unlock, (db_mutex_t mutex), (dbenv, mutex))
 
+int DbEnv::get_thread_id_fn(void (**argp)(DbEnv *, pid_t *, db_threadid_t *))
+{
+	if (argp != NULL)
+		*argp = thread_id_callback_;
+	return 0;
+}
+
 int DbEnv::set_thread_id(void (*arg)(DbEnv *, pid_t *, db_threadid_t *))
 {
 	DB_ENV *dbenv = unwrap(this);
@@ -936,6 +1010,14 @@ int DbEnv::set_thread_id(void (*arg)(DbEnv *, pid_t *, db_threadid_t *))
 		DB_ERROR(this, "DbEnv::set_thread_id", ret, error_policy());
 
 	return (ret);
+}
+
+int DbEnv::get_thread_id_string_fn(
+    char *(**argp)(DbEnv *, pid_t, db_threadid_t, char *))
+{
+	if (argp != NULL)
+		*argp = thread_id_string_callback_;
+	return 0;
 }
 
 int DbEnv::set_thread_id_string(
@@ -953,6 +1035,8 @@ int DbEnv::set_thread_id_string(
 	return (ret);
 }
 
+DBENV_METHOD(add_data_dir, (const char *dir), (dbenv, dir))
+
 int DbEnv::cdsgroup_begin(DbTxn **tid)
 {
 	DB_ENV *dbenv = unwrap(this);
@@ -961,7 +1045,7 @@ int DbEnv::cdsgroup_begin(DbTxn **tid)
 
 	ret = dbenv->cdsgroup_begin(dbenv, &txn);
 	if (DB_RETOK_STD(ret))
-		*tid = new DbTxn(txn);
+		*tid = new DbTxn(txn, NULL);
 	else
 		DB_ERROR(this, "DbEnv::cdsgroup_begin", ret, error_policy());
 
@@ -976,7 +1060,7 @@ int DbEnv::txn_begin(DbTxn *pid, DbTxn **tid, u_int32_t flags)
 
 	ret = dbenv->txn_begin(dbenv, unwrap(pid), &txn, flags);
 	if (DB_RETOK_STD(ret))
-		*tid = new DbTxn(txn);
+		*tid = new DbTxn(txn, pid);
 	else
 		DB_ERROR(this, "DbEnv::txn_begin", ret, error_policy());
 
@@ -986,12 +1070,12 @@ int DbEnv::txn_begin(DbTxn *pid, DbTxn **tid, u_int32_t flags)
 DBENV_METHOD(txn_checkpoint, (u_int32_t kbyte, u_int32_t min, u_int32_t flags),
     (dbenv, kbyte, min, flags))
 
-int DbEnv::txn_recover(DbPreplist *preplist, long count,
-    long *retp, u_int32_t flags)
+int DbEnv::txn_recover(DbPreplist *preplist, u_int32_t count,
+    u_int32_t *retp, u_int32_t flags)
 {
 	DB_ENV *dbenv = unwrap(this);
 	DB_PREPLIST *c_preplist;
-	long i;
+	u_int32_t i;
 	int ret;
 
 	/*
@@ -1018,7 +1102,7 @@ int DbEnv::txn_recover(DbPreplist *preplist, long count,
 	}
 
 	for (i = 0; i < *retp; i++) {
-		preplist[i].txn = new DbTxn();
+		preplist[i].txn = new DbTxn(NULL);
 		preplist[i].txn->imp_ = c_preplist[i].txn;
 		memcpy(preplist[i].gid, c_preplist[i].gid,
 		    sizeof(preplist[i].gid));
@@ -1110,8 +1194,20 @@ DBENV_METHOD(repmgr_set_local_site, (const char* host, u_int16_t port,
     u_int32_t flags), (dbenv, host, port, flags))
 DBENV_METHOD(repmgr_site_list, (u_int *countp, DB_REPMGR_SITE **listp),
     (dbenv, countp, listp))
-DBENV_METHOD(repmgr_start, (int nthreads, u_int32_t flags),
-    (dbenv, nthreads, flags))
+
+int DbEnv::repmgr_start(int nthreads, u_int32_t flags)
+{
+	DB_ENV *dbenv = unwrap(this);
+	int ret;
+
+	ret = dbenv->repmgr_start(dbenv, nthreads, flags);
+	if (!DB_RETOK_REPMGR_START(ret))
+		DB_ERROR(this, "DbEnv::repmgr_start", ret,
+		    error_policy());
+
+	return (ret);
+}
+
 DBENV_METHOD(repmgr_stat, (DB_REPMGR_STAT **statp, u_int32_t flags),
     (dbenv, statp, flags))
 DBENV_METHOD(repmgr_stat_print, (u_int32_t flags), (dbenv, flags))
@@ -1129,6 +1225,13 @@ DBENV_METHOD(set_timeout,
 char *DbEnv::version(int *major, int *minor, int *patch)
 {
 	return (db_version(major, minor, patch));
+}
+
+// static method
+char *DbEnv::full_version(int *family, int *release,
+    int *major, int *minor, int *patch)
+{
+	return (db_full_version(family, release, major, minor, patch));
 }
 
 // static method

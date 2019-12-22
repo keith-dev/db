@@ -1,9 +1,9 @@
 #!/bin/sh -
-#	$Id: s_s60_mmp,v 12.3 2007/07/06 16:29:16 bostic Exp $
+#	$Id$
 #
 # Build BREW .dsp files.
 
-. RELEASE
+. ./RELEASE
 
 SRCFILES=srcfiles.in
 

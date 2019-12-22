@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1999,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1999, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: tcl_log.c,v 12.18 2008/01/08 20:58:52 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -376,25 +376,25 @@ tcl_LogStat(interp, objc, objv, dbenv)
 	MAKE_STAT_LIST("Log file mode", sp->st_mode);
 	MAKE_STAT_LIST("Log record cache size", sp->st_lg_bsize);
 	MAKE_STAT_LIST("Current log file size", sp->st_lg_size);
-	MAKE_STAT_LIST("Log file records written", sp->st_record);
+	MAKE_WSTAT_LIST("Log file records written", sp->st_record);
 	MAKE_STAT_LIST("Mbytes written", sp->st_w_mbytes);
 	MAKE_STAT_LIST("Bytes written (over Mb)", sp->st_w_bytes);
 	MAKE_STAT_LIST("Mbytes written since checkpoint", sp->st_wc_mbytes);
 	MAKE_STAT_LIST("Bytes written (over Mb) since checkpoint",
 	    sp->st_wc_bytes);
-	MAKE_STAT_LIST("Times log written", sp->st_wcount);
+	MAKE_WSTAT_LIST("Times log written", sp->st_wcount);
 	MAKE_STAT_LIST("Times log written because cache filled up",
 	    sp->st_wcount_fill);
-	MAKE_STAT_LIST("Times log read from disk", sp->st_rcount);
-	MAKE_STAT_LIST("Times log flushed to disk", sp->st_scount);
+	MAKE_WSTAT_LIST("Times log read from disk", sp->st_rcount);
+	MAKE_WSTAT_LIST("Times log flushed to disk", sp->st_scount);
 	MAKE_STAT_LIST("Current log file number", sp->st_cur_file);
 	MAKE_STAT_LIST("Current log file offset", sp->st_cur_offset);
 	MAKE_STAT_LIST("On-disk log file number", sp->st_disk_file);
 	MAKE_STAT_LIST("On-disk log file offset", sp->st_disk_offset);
 	MAKE_STAT_LIST("Max commits in a log flush", sp->st_maxcommitperflush);
 	MAKE_STAT_LIST("Min commits in a log flush", sp->st_mincommitperflush);
-	MAKE_STAT_LIST("Number of region lock waits", sp->st_region_wait);
-	MAKE_STAT_LIST("Number of region lock nowaits", sp->st_region_nowait);
+	MAKE_WSTAT_LIST("Number of region lock waits", sp->st_region_wait);
+	MAKE_WSTAT_LIST("Number of region lock nowaits", sp->st_region_nowait);
 #endif
 	Tcl_SetObjResult(interp, res);
 error:
@@ -646,16 +646,17 @@ enum logwhich {
 
 /*
  * tcl_LogConfig --
- *	Call DB_ENV->rep_set_config().
+ *	Call DB_ENV->log_set_config().
  *
  * PUBLIC: int tcl_LogConfig
- * PUBLIC:     __P((Tcl_Interp *, DB_ENV *, Tcl_Obj *));
+ * PUBLIC:     __P((Tcl_Interp *, DB_ENV *, Tcl_Obj *, Tcl_Obj *));
  */
 int
-tcl_LogConfig(interp, dbenv, list)
+tcl_LogConfig(interp, dbenv, which, onoff)
 	Tcl_Interp *interp;		/* Interpreter */
 	DB_ENV *dbenv;			/* Environment pointer */
-	Tcl_Obj *list;			/* {which on|off} */
+	Tcl_Obj *which;			/* {which on|off} */
+	Tcl_Obj *onoff;		
 {
 	static const char *confonoff[] = {
 		"off",
@@ -666,19 +667,11 @@ tcl_LogConfig(interp, dbenv, list)
 		LOGCONF_OFF,
 		LOGCONF_ON
 	};
-	Tcl_Obj **myobjv, *onoff, *which;
-	int myobjc, on, optindex, result, ret;
+	int on, optindex, ret;
 	u_int32_t wh;
 
-	result = Tcl_ListObjGetElements(interp, list, &myobjc, &myobjv);
-	if (myobjc != 2)
-		Tcl_WrongNumArgs(interp, 2, myobjv, "?{which onoff}?");
-	which = myobjv[0];
-	onoff = myobjv[1];
-	if (result != TCL_OK)
-		return (result);
-	if (Tcl_GetIndexFromObj(interp, which, confwhich, "option",
-	    TCL_EXACT, &optindex) != TCL_OK)
+	if (Tcl_GetIndexFromObj(interp,
+	    which, confwhich, "option", TCL_EXACT, &optindex) != TCL_OK)
 		return (IS_HELP(which));
 
 	switch ((enum logwhich)optindex) {
@@ -700,8 +693,8 @@ tcl_LogConfig(interp, dbenv, list)
 	default:
 		return (TCL_ERROR);
 	}
-	if (Tcl_GetIndexFromObj(interp, onoff, confonoff, "option",
-	    TCL_EXACT, &optindex) != TCL_OK)
+	if (Tcl_GetIndexFromObj(interp,
+	    onoff, confonoff, "option", TCL_EXACT, &optindex) != TCL_OK)
 		return (IS_HELP(onoff));
 	switch ((enum confonoff)optindex) {
 	case LOGCONF_OFF:

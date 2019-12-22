@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 1999,2008 Oracle.  All rights reserved.
+# Copyright (c) 1999, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: recd009.tcl,v 12.6 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	recd009
 # TEST	Verify record numbering across split/reverse splits and recovery.
@@ -33,7 +33,7 @@ proc recd009 { method {select 0} args} {
 	set dbenv [eval $env_cmd]
 	error_check_good dbenv [is_valid_env $dbenv] TRUE
 
-	set oflags "-env $dbenv -pagesize 8192 -create -mode 0644 $opts $method"
+	set oflags "-env $dbenv -auto_commit -pagesize 8192 -create -mode 0644 $opts $method"
 	set db [eval {berkdb_open} $oflags $testfile]
 	error_check_good dbopen [is_valid_db $db] TRUE
 
@@ -83,9 +83,9 @@ proc recd009 { method {select 0} args} {
 			set abortpg 1
 			set commitpg 0
 		}
-		op_recover abort $testdir $env_cmd $testfile $cmd $msg
+		op_recover abort $testdir $env_cmd $testfile $cmd $msg $args
 		recd009_recnocheck $testdir $testfile $opts $abortkeys $abortpg
-		op_recover commit $testdir $env_cmd $testfile $cmd $msg
+		op_recover commit $testdir $env_cmd $testfile $cmd $msg $args
 		recd009_recnocheck $testdir $testfile $opts \
 		    $commitkeys $commitpg
 	}

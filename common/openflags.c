@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1997, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: openflags.c,v 12.13 2008/01/11 16:54:09 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"

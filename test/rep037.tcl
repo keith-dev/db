@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 2004,2008 Oracle.  All rights reserved.
+# Copyright (c) 2004, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: rep037.tcl,v 12.19 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	rep037
 # TEST	Test of internal initialization and page throttling.
@@ -17,10 +17,8 @@
 proc rep037 { method { niter 1500 } { tnum "037" } args } {
 
 	source ./include.tcl
-	if { $is_windows9x_test == 1 } {
-		puts "Skipping replication test on Win 9x platform."
-		return
-	}
+	global databases_in_memory
+	global repfiles_in_memory
 
 	# Valid for all access methods.
 	if { $checking_valid_methods } {
@@ -39,11 +37,27 @@ proc rep037 { method { niter 1500 } { tnum "037" } args } {
 
 	set logsets [create_logsets 2]
 
+	# Set up for on-disk or in-memory databases.
+	set msg "using on-disk databases"
+	if { $databases_in_memory } {
+		set msg "using named in-memory databases"
+		if { [is_queueext $method] } { 
+			puts -nonewline "Skipping rep$tnum for method "
+			puts "$method with named in-memory databases."
+			return
+		}
+	}
+
+	set msg2 "and on-disk replication files"
+	if { $repfiles_in_memory } {
+		set msg2 "and in-memory replication files"
+	}
+
 	# Run the body of the test with and without recovery,
-	# and with and without cleaning.
-	set cleanopts { bulk clean noclean }
+	# and with various configurations.
+	set configopts { dup bulk clean noclean }
 	foreach r $test_recopts {
-		foreach c $cleanopts {
+		foreach c $configopts {
 			foreach l $logsets {
 				set logindex [lsearch -exact $l "in-memory"]
 				if { $r == "-recover" && $logindex != -1 } {
@@ -51,9 +65,14 @@ proc rep037 { method { niter 1500 } { tnum "037" } args } {
 					    with in-memory logs."
 					continue
 				}
+				if { $c == "dup" && $databases_in_memory } {
+					puts "Skipping rep$tnum for dup\
+					    with in-memory databases."
+					continue
+				}
 				set args $saved_args
-				puts "Rep$tnum ($method $c $r $args):\
-				    Test of internal init with page throttling."
+				puts "Rep$tnum ($method $c $r $args): Test of\
+				    internal init with page throttling $msg $msg2."
 				puts "Rep$tnum: Master logs are [lindex $l 0]"
 				puts "Rep$tnum: Client logs are [lindex $l 1]"
 				rep037_sub $method $niter $tnum $l $r $c $args
@@ -62,15 +81,22 @@ proc rep037 { method { niter 1500 } { tnum "037" } args } {
 	}
 }
 
-proc rep037_sub { method niter tnum logset recargs clean largs } {
+proc rep037_sub { method niter tnum logset recargs config largs } {
 	global testdir
 	global util_path
+	global databases_in_memory
+	global repfiles_in_memory
 	global rep_verbose
 	global verbose_type
 
 	set verbargs ""
 	if { $rep_verbose == 1 } {
 		set verbargs " -verbose {$verbose_type on} "
+	}
+
+	set repmemargs ""
+	if { $repfiles_in_memory } {
+		set repmemargs "-rep_inmem_files "
 	}
 
 	env_cleanup $testdir
@@ -105,13 +131,23 @@ proc rep037_sub { method niter tnum logset recargs clean largs } {
 	# but that seems like overkill.
 	#
 	set bulk 0
-	if { $clean == "bulk" } {
+	set clean $config
+	if { $config == "bulk" } {
 		set bulk 1
 		set clean "clean"
 	}
+	#
+	# If using dups do not clean the env.  We want to keep the
+	# database around to a dbp and cursor to open.
+	#
+	set dup 0
+	if { $config == "dup" } {
+		set dup 1
+		set clean "noclean"
+	}
 	# Open a master.
 	repladd 1
-	set ma_envcmd "berkdb_env_noerr -create $m_txnargs \
+	set ma_envcmd "berkdb_env_noerr -create $m_txnargs $repmemargs \
 	    $m_logargs -log_max $log_max -errpfx MASTER $verbargs \
 	    -home $masterdir -rep_transport \[list 1 replsend\]"
 	set masterenv [eval $ma_envcmd $recargs -rep_master]
@@ -119,7 +155,7 @@ proc rep037_sub { method niter tnum logset recargs clean largs } {
 
 	# Open a client
 	repladd 2
-	set cl_envcmd "berkdb_env_noerr -create $c_txnargs \
+	set cl_envcmd "berkdb_env_noerr -create $c_txnargs $repmemargs \
 	    $c_logargs -log_max $log_max -errpfx CLIENT $verbargs \
 	    -home $clientdir -rep_transport \[list 2 replsend\]"
 	set clientenv [eval $cl_envcmd $recargs -rep_client]
@@ -139,10 +175,26 @@ proc rep037_sub { method niter tnum logset recargs clean largs } {
 	#
 	$masterenv test force noarchive_timeout
 
+	if { $dup } {
+		#
+		# Create a known db for dup cursor testing.
+		#
+		puts "\tRep$tnum.a0: Creating dup db."
+		if { $databases_in_memory == 1 } {
+			set dupfile { "" "dup.db" }
+		} else {
+			set dupfile "dup.db"
+		}
+		set dargs [convert_args $method $largs]
+		set omethod [convert_method $method]
+		set dupdb [eval {berkdb_open_noerr} -env $masterenv \
+		    -auto_commit -create -mode 0644 $omethod $dargs $dupfile]
+		$dupdb close
+	}
 	# Run rep_test in the master (and update client).
 	puts "\tRep$tnum.a: Running rep_test in replicated env."
 	set start 0
-	eval rep_test $method $masterenv NULL $niter $start $start 0 0 $largs
+	eval rep_test $method $masterenv NULL $niter $start $start 0 $largs
 	incr start $niter
 	process_msgs $envlist
 
@@ -158,7 +210,7 @@ proc rep037_sub { method niter tnum logset recargs clean largs } {
 		# Run rep_test in the master (don't update client).
 		puts "\tRep$tnum.c: Running rep_test in replicated env."
 	 	eval rep_test \
-		    $method $masterenv NULL $niter $start $start 0 0 $largs
+		    $method $masterenv NULL $niter $start $start 0 $largs
 		incr start $niter
 		replclear 2
 
@@ -181,6 +233,22 @@ proc rep037_sub { method niter tnum logset recargs clean largs } {
 	}
 	set clientenv [eval $cl_envcmd $recargs -rep_client]
 	error_check_good client_env [is_valid_env $clientenv] TRUE
+
+	#
+	# If testing duplicate cursors, open and close a dup cursor now.  All
+	# we need to do is create a dup cursor and then close both
+	# cursors before internal init begins.  That will make sure
+	# that the lockout is working correctly.
+	#
+	if { $dup } {
+		puts "\tRep$tnum.e.1: Open/close dup cursor."
+		set dupdb [eval {berkdb_open_noerr} -env $clientenv $dupfile]
+		set dbc [$dupdb cursor]
+		set dbc2 [$dbc dup]
+		$dbc2 close
+		$dbc close
+		$dupdb close
+	}
 	set envlist "{$masterenv 1} {$clientenv 2}"
 	process_msgs $envlist 0 NONE err
 	if { $clean == "noclean" } {
@@ -192,13 +260,17 @@ proc rep037_sub { method niter tnum logset recargs clean largs } {
 		# logs and that will trigger it.
 		#
 		set entries 10
-		eval rep_test $method \
-		    $masterenv NULL $entries $niter $start $start 0 $largs
+		eval rep_test \
+		    $method $masterenv NULL $entries $start $start 0 $largs
+		incr start $entries
 		process_msgs $envlist 0 NONE err
 	}
 
 	puts "\tRep$tnum.f: Verify logs and databases"
-	rep_verify $masterdir $masterenv $clientdir $clientenv 1
+	set verify_subset \
+	    [expr { $m_logtype == "in-memory" || $c_logtype == "in-memory" }]
+	rep_verify $masterdir $masterenv\
+	     $clientdir $clientenv $verify_subset 1 1
 
 	puts "\tRep$tnum.g: Verify throttling."
 	if { $niter > 1000 } {

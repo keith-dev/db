@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: lock_list.c,v 12.19 2008/01/30 04:30:42 mjc Exp $
+ * $Id$
  */
 
 #include "db_config.h"

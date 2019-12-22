@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: db_open.c,v 12.43 2008/01/08 20:58:10 bostic Exp $
+ * $Id$
  */
 
 #include "db_config.h"
@@ -17,7 +17,6 @@
 #include "dbinc/fop.h"
 #include "dbinc/hash.h"
 #include "dbinc/lock.h"
-#include "dbinc/log.h"
 #include "dbinc/mp.h"
 #include "dbinc/qam.h"
 #include "dbinc/txn.h"
@@ -57,12 +56,31 @@ __db_open(dbp, ip, txn, fname, dname, type, flags, mode, meta_pgno)
 	int mode;
 	db_pgno_t meta_pgno;
 {
+	DB *tdbp;
 	ENV *env;
 	int ret;
 	u_int32_t id;
 
 	env = dbp->env;
 	id = TXN_INVALID;
+
+	/*
+	 * We must flush any existing pages before truncating the file
+	 * since they could age out of mpool and overwrite new pages.
+	 */
+	if (LF_ISSET(DB_TRUNCATE)) {
+		if ((ret = __db_create_internal(&tdbp, dbp->env, 0)) != 0)
+			goto err;
+		ret = __db_open(tdbp, ip, txn, fname, dname, DB_UNKNOWN,
+		     DB_NOERROR | (flags &  ~(DB_TRUNCATE|DB_CREATE)),
+		     mode, meta_pgno);
+		if (ret == 0)
+			ret = __memp_ftruncate(tdbp->mpf, txn, ip, 0, 0);
+		(void)__db_close(tdbp, txn, DB_NOSYNC);
+		if (ret != 0 && ret != ENOENT && ret != EINVAL)
+			goto err;
+		ret = 0;
+	}
 
 	DB_TEST_RECOVERY(dbp, DB_TEST_PREOPEN, ret, fname);
 
@@ -89,6 +107,14 @@ __db_open(dbp, ip, txn, fname, dname, type, flags, mode, meta_pgno)
 	/* Fill in the type. */
 	dbp->type = type;
 
+	/* Save the file and database names. */
+	if ((fname != NULL &&
+	    (ret = __os_strdup(env, fname, &dbp->fname)) != 0))
+		goto err;
+	if ((dname != NULL &&
+	    (ret = __os_strdup(env, dname, &dbp->dname)) != 0))
+		goto err;
+
 	/*
 	 * If both fname and subname are NULL, it's always a create, so make
 	 * sure that we have both DB_CREATE and a type specified.  It would
@@ -98,6 +124,11 @@ __db_open(dbp, ip, txn, fname, dname, type, flags, mode, meta_pgno)
 	 * this interface as well.
 	 */
 	if (fname == NULL) {
+		if (dbp->p_internal != NULL) {
+			__db_errx(env,
+		    "Partitioned databases may not be in memory.");
+			return (ENOENT);
+		}
 		if (dname == NULL) {
 			if (!LF_ISSET(DB_CREATE)) {
 				__db_errx(env,
@@ -153,28 +184,25 @@ __db_open(dbp, ip, txn, fname, dname, type, flags, mode, meta_pgno)
 		if ((ret = __fop_file_setup(dbp, ip,
 		    txn, fname, mode, flags, &id)) != 0)
 			return (ret);
+		/*
+		 * If we are creating the first sub-db then this is the
+		 * call to create the master db and we tried to open it
+		 * read-only.  The create will force it to be read/write
+		 * So clear the RDONLY flag if we just created it.
+		 */
+		 if (!F_ISSET(dbp, DB_AM_RDONLY))
+		 	LF_CLR(DB_RDONLY);
 	} else {
+		if (dbp->p_internal != NULL) {
+			__db_errx(env,
+    "Partitioned databases may not be included with multiple databases.");
+			return (ENOENT);
+		}
 		if ((ret = __fop_subdb_setup(dbp, ip,
 		    txn, fname, dname, mode, flags)) != 0)
 			return (ret);
 		meta_pgno = dbp->meta_pgno;
 	}
-
-	/*
-	 * If we created the file, set the truncate flag for the mpool.  This
-	 * isn't for anything we've done, it's protection against stupid user
-	 * tricks: if the user deleted a file behind Berkeley DB's back, we
-	 * may still have pages in the mpool that match the file's "unique" ID.
-	 *
-	 * Note that if we're opening a subdatabase, we don't want to set
-	 * the TRUNCATE flag even if we just created the file--we already
-	 * opened and updated the master using access method interfaces,
-	 * so we don't want to get rid of any pages that are in the mpool.
-	 * If we created the file when we opened the master, we already hit
-	 * this check in a non-subdatabase context then.
-	 */
-	if (dname == NULL && F_ISSET(dbp, DB_AM_CREATED))
-		LF_SET(DB_TRUNCATE);
 
 	/* Set up the underlying environment. */
 	if ((ret = __env_setup(dbp, txn, fname, dname, id, flags)) != 0)
@@ -224,6 +252,11 @@ __db_open(dbp, ip, txn, fname, dname, type, flags, mode, meta_pgno)
 	if (ret != 0)
 		goto err;
 
+#ifdef HAVE_PARTITION
+	if (dbp->p_internal != NULL && (ret =
+	    __partition_open(dbp, ip, txn, fname, type, flags, mode, 1)) != 0)
+		goto err;
+#endif
 	DB_TEST_RECOVERY(dbp, DB_TEST_POSTOPEN, ret, fname);
 
 	/*
@@ -591,12 +624,143 @@ swap_retry:
 	default:
 		goto bad_format;
 	}
+
+	if (FLD_ISSET(meta->metaflags,
+	    DBMETA_PART_RANGE | DBMETA_PART_CALLBACK))
+		if ((ret =
+		    __partition_init(dbp, meta->metaflags)) != 0)
+			return (ret);
 	return (0);
 
 bad_format:
 	if (F_ISSET(dbp, DB_AM_RECOVER))
 		ret = ENOENT;
 	else
-		__db_errx(env, "%s: unexpected file type or format", name);
+		__db_errx(env,
+		    "__db_meta_setup: %s: unexpected file type or format",
+		    name);
 	return (ret == 0 ? EINVAL : ret);
+}
+
+/*
+ * __db_reopen --
+ *	Reopen a subdatabase if its meta/root pages move.
+ * PUBLIC: int __db_reopen __P((DBC *));
+ */
+int
+__db_reopen(arg_dbc)
+	DBC *arg_dbc;
+{
+	BTREE *bt;
+	DBC *dbc;
+	DB_TXN *txn;
+	HASH *ht;
+	DB *dbp, *mdbp;
+	DB_LOCK meta_lock, new_lock, old_lock;
+	PAGE *new_page, *old_page;
+	db_pgno_t newpgno, oldpgno;
+	int ret, t_ret;
+
+	dbc = arg_dbc;
+	dbp = dbc->dbp;
+	old_page = new_page = NULL;
+	mdbp = NULL;
+
+	COMPQUIET(bt, NULL);
+	COMPQUIET(ht, NULL);
+
+	/*
+	 * This must be done in the context of a transaction.  If the
+	 * requester does not have a transaction, create one.
+	 */
+
+	if (TXN_ON(dbp->env) && (txn = dbc->txn) == NULL) {
+		if ((ret = __txn_begin(dbp->env,
+		     dbc->thread_info, NULL, &txn, 0)) != 0)
+			return (ret);
+		if ((ret = __db_cursor(dbp,
+		     dbc->thread_info, txn, &dbc, 0)) != 0) {
+			(void)__txn_abort(txn);
+			return (ret);
+		}
+	}
+
+	/*
+	 * Lock the master meta data page so we don't block holding
+	 * the root pinned when opening the master database since
+	 * readers will not lock the root.
+	 */
+	oldpgno = PGNO_BASE_MD;
+	if (STD_LOCKING(dbc) && (ret = __db_lget(dbc,
+	    0, oldpgno, DB_LOCK_WRITE, 0, &meta_lock)) != 0)
+		return (ret);
+
+	if (dbp->type == DB_HASH) {
+		ht = (HASH*)dbp->h_internal;
+		oldpgno = ht->meta_pgno;
+	} else {
+		bt = (BTREE *)dbp->bt_internal;
+		oldpgno = bt->bt_root;
+	}
+	if (STD_LOCKING(dbc) && (ret = __db_lget(dbc,
+	    0, oldpgno, DB_LOCK_WRITE, 0, &old_lock)) != 0)
+		goto err;
+
+	if ((ret = __memp_fget(dbp->mpf, &oldpgno,
+	    dbc->thread_info, dbc->txn, DB_MPOOL_DIRTY, &old_page)) != 0 &&
+	    ret != DB_PAGE_NOTFOUND)
+		goto err;
+
+	if ((ret = __db_master_open(dbp,
+	    dbc->thread_info, dbc->txn, dbp->fname, 0, 0, &mdbp)) != 0)
+		goto err;
+
+	if ((ret = __db_master_update(mdbp, dbp, dbc->thread_info,
+	    dbc->txn, dbp->dname, dbp->type, MU_OPEN, NULL, 0)) != 0)
+		goto err;
+
+	if (dbp->type == DB_HASH)
+		newpgno = ht->meta_pgno = dbp->meta_pgno;
+	else {
+		bt->bt_meta = dbp->meta_pgno;
+		if ((ret = __bam_read_root(dbp,
+		    dbc->thread_info, dbc->txn, bt->bt_meta, 0)) != 0)
+			goto err;
+		newpgno = bt->bt_root;
+	}
+
+	if (oldpgno == newpgno)
+		goto done;
+
+	if (STD_LOCKING(dbc) && (ret = __db_lget(dbc,
+	    0, newpgno, DB_LOCK_WRITE, 0, &new_lock)) != 0)
+		goto err;
+
+	if ((ret = __memp_fget(dbp->mpf, &newpgno,
+	    dbc->thread_info, dbc->txn, DB_MPOOL_DIRTY, &new_page)) != 0)
+		goto err;
+
+done:	if (dbp->type == DB_HASH)
+		ht->revision = dbp->mpf->mfp->revision;
+	else
+		bt->revision = dbp->mpf->mfp->revision;
+
+err:	if (old_page != NULL && (t_ret = __memp_fput(dbp->mpf,
+	    dbc->thread_info, old_page, dbc->priority)) != 0 && ret == 0)
+		ret = t_ret;
+	if (new_page != NULL && (t_ret = __memp_fput(dbp->mpf,
+	    dbc->thread_info, new_page, dbc->priority)) != 0 && ret == 0)
+		ret = t_ret;
+
+	if (mdbp != NULL &&
+	    (t_ret = __db_close(mdbp, dbc->txn, DB_NOSYNC)) != 0 && ret == 0)
+		ret = t_ret;
+
+	if (dbc != arg_dbc) {
+		if ((t_ret = __dbc_close(dbc)) != 0 && ret == 0)
+			ret = t_ret;
+		if ((t_ret = __txn_commit(txn, 0)) != 0 && ret == 0)
+			ret = t_ret;
+	}
+	return (ret);
 }

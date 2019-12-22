@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 2005,2008 Oracle.  All rights reserved.
+# Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: rep058.tcl,v 12.16 2008/01/08 20:58:53 bostic Exp $
+# $Id$
 #
 # TEST	rep058
 # TEST
@@ -15,10 +15,7 @@
 proc rep058 { method { tnum "058" } args } {
 
 	source ./include.tcl
-	if { $is_windows9x_test == 1 } {
-		puts "Skipping replication test on Win 9x platform."
-		return
-	}
+	global repfiles_in_memory
 
 	# There should be no difference with methods.  Just use btree.
 	if { $checking_valid_methods } {
@@ -31,8 +28,13 @@ proc rep058 { method { tnum "058" } args } {
 	}
 
 	set args [convert_args $method $args]
-
 	set logsets [create_logsets 2]
+
+	set msg2 "and on-disk replication files"
+	if { $repfiles_in_memory } {
+		set msg2 "and in-memory replication files"
+	}
+	
 	foreach r $test_recopts {
 		foreach l $logsets {
 			set logindex [lsearch -exact $l "in-memory"]
@@ -43,7 +45,7 @@ proc rep058 { method { tnum "058" } args } {
 			}
 
 			puts "Rep$tnum ($method $r): Replication with \
-			    pre-created databases."
+			    pre-created databases $msg2."
 			puts "Rep$tnum: Master logs are [lindex $l 0]"
 			puts "Rep$tnum: Client logs are [lindex $l 1]"
 			rep058_sub $method $tnum $l $r $args
@@ -53,12 +55,18 @@ proc rep058 { method { tnum "058" } args } {
 
 proc rep058_sub { method tnum logset recargs largs } {
 	source ./include.tcl
+	global repfiles_in_memory
 	global rep_verbose
 	global verbose_type
 
 	set verbargs ""
 	if { $rep_verbose == 1 } {
 		set verbargs " -verbose {$verbose_type on} "
+	}
+
+	set repmemargs ""
+	if { $repfiles_in_memory } {
+		set repmemargs "-rep_inmem_files "
 	}
 
 	set orig_tdir $testdir
@@ -87,14 +95,14 @@ proc rep058_sub { method tnum logset recargs largs } {
 	# Open a master.
 	repladd 1
 	set envcmd(M) "berkdb_env_noerr -create $m_txnargs \
-	    $m_logargs -lock_detect default $verbargs \
+	    $m_logargs -lock_detect default $verbargs $repmemargs \
 	    -home $masterdir -rep_transport \[list 1 replsend\]"
 	set menv [eval $envcmd(M) $recargs]
 
 	# Open a client
 	repladd 2
 	set envcmd(C) "berkdb_env_noerr -create $c_txnargs \
-	    $c_logargs -lock_detect default $verbargs \
+	    $c_logargs -lock_detect default $verbargs $repmemargs \
 	    -home $clientdir -rep_transport \[list 2 replsend\]"
 	set cenv [eval $envcmd(C) $recargs]
 	error_check_good client_env [is_valid_env $cenv] TRUE
@@ -112,11 +120,11 @@ proc rep058_sub { method tnum logset recargs largs } {
 	error_check_good master [$menv rep_start -master] 0
 	error_check_good client [$cenv rep_start -client] 0
 	#
-	# We'll only catch this error if we turn on no-autoinit.
+	# We'll only catch this error if we turn off autoinit.
 	# Otherwise, the system will throw away everything on the
 	# client and resync.
 	#
-	$cenv rep_config {noautoinit on}
+	$cenv rep_config {autoinit off}
 
 	set envlist "{$menv 1} {$cenv 2}"
 	process_msgs $envlist 0 NONE err

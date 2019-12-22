@@ -1,29 +1,30 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2005,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2005, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: repmgr_posix.c,v 1.37 2008/03/13 17:31:28 mbrey Exp $
+ * $Id$
  */
 
 #include "db_config.h"
 
-#define	__INCLUDE_NETWORKING	1
-#define	__INCLUDE_SELECT_H	1
 #include "db_int.h"
 
 /*
- * A very rough guess at the maximum stack space one of our threads could ever
- * need, which we hope is plenty conservative.  This can be patched in the field
- * if necessary.
+ * Invalid open file descriptor value, that can be used as an out-of-band
+ * sentinel to mark our signalling pipe as unopened.
  */
-#ifdef _POSIX_THREAD_ATTR_STACKSIZE
-size_t __repmgr_guesstimated_max = (128 * 1024);
-#endif
+#define	NO_SUCH_FILE_DESC	(-1)
 
-static int __repmgr_conn_work __P((ENV *,
-    REPMGR_CONNECTION *, fd_set *, fd_set *, int));
+/* Aggregated control info needed for preparing for select() call. */
+struct io_info {
+	fd_set *reads, *writes;
+	int maxfd;
+};
+
+static int __repmgr_conn_work __P((ENV *, REPMGR_CONNECTION *, void *));
 static int finish_connecting __P((ENV *, REPMGR_CONNECTION *));
+static int prepare_io __P((ENV *, REPMGR_CONNECTION *, void *));
 
 /*
  * Starts the thread described in the argument, and stores the resulting thread
@@ -37,15 +38,11 @@ __repmgr_thread_start(env, runnable)
 	REPMGR_RUNNABLE *runnable;
 {
 	pthread_attr_t *attrp;
-#ifdef _POSIX_THREAD_ATTR_STACKSIZE
+#if defined(_POSIX_THREAD_ATTR_STACKSIZE) && defined(DB_STACKSIZE)
 	pthread_attr_t attributes;
 	size_t size;
 	int ret;
-#endif
 
-	runnable->finished = FALSE;
-
-#ifdef _POSIX_THREAD_ATTR_STACKSIZE
 	attrp = &attributes;
 	if ((ret = pthread_attr_init(&attributes)) != 0) {
 		__db_err(env,
@@ -53,13 +50,8 @@ __repmgr_thread_start(env, runnable)
 		return (ret);
 	}
 
-	/*
-	 * On a 64-bit machine it seems reasonable that we could need twice as
-	 * much stack space as we did on a 32-bit machine.
-	 */
-	size = __repmgr_guesstimated_max;
-	if (sizeof(size_t) > 4)
-		size *= 2;
+	size = DB_STACKSIZE;
+
 #ifdef PTHREAD_STACK_MIN
 	if (size < PTHREAD_STACK_MIN)
 		size = PTHREAD_STACK_MIN;
@@ -73,8 +65,11 @@ __repmgr_thread_start(env, runnable)
 	attrp = NULL;
 #endif
 
+	runnable->finished = FALSE;
+	runnable->env = env;
+
 	return (pthread_create(&runnable->thread_id, attrp,
-		    runnable->run, env));
+		    runnable->run, runnable));
 }
 
 /*
@@ -148,10 +143,10 @@ __repmgr_await_ack(env, lsnp)
 	while (!__repmgr_is_permanent(env, lsnp)) {
 		if (timed)
 			ret = pthread_cond_timedwait(&db_rep->ack_condition,
-			    &db_rep->mutex, &deadline);
+			    db_rep->mutex, &deadline);
 		else
 			ret = pthread_cond_wait(&db_rep->ack_condition,
-			    &db_rep->mutex);
+			    db_rep->mutex);
 		if (db_rep->finished)
 			return (DB_REP_UNAVAIL);
 		if (ret != 0)
@@ -230,7 +225,7 @@ __repmgr_await_drain(env, conn, timeout)
 	ret = 0;
 	while (conn->out_queue_length >= OUT_QUEUE_LIMIT) {
 		ret = pthread_cond_timedwait(&conn->drained,
-		    &db_rep->mutex, &deadline);
+		    db_rep->mutex, &deadline);
 		switch (ret) {
 		case 0:
 			if (db_rep->finished)
@@ -283,30 +278,72 @@ __repmgr_free_cond(c)
 }
 
 /*
- * PUBLIC: int __repmgr_init_sync __P((ENV *, DB_REP *));
- *
- * Allocate/initialize all data necessary for thread synchronization.  This
- * should be an all-or-nothing affair.  Other than here and in _close_sync there
- * should never be a time when these resources aren't either all allocated or
- * all freed.  If that's true, then we can safely use the values of the file
- * descriptor(s) to keep track of which it is.
+ * PUBLIC: void __repmgr_env_create_pf __P((DB_REP *));
  */
-int
-__repmgr_init_sync(env, db_rep)
-	ENV *env;
+void
+__repmgr_env_create_pf(db_rep)
 	DB_REP *db_rep;
 {
-	int ret, mutex_inited, ack_inited, elect_inited, queue_inited,
-	    file_desc[2];
+	db_rep->read_pipe = db_rep->write_pipe = NO_SUCH_FILE_DESC;
+}
 
-	COMPQUIET(env, NULL);
+/*
+ * PUBLIC: int __repmgr_create_mutex_pf __P((mgr_mutex_t *));
+ */
+int
+__repmgr_create_mutex_pf(mutex)
+	mgr_mutex_t *mutex;
+{
+	return (pthread_mutex_init(mutex, NULL));
+}
 
-	mutex_inited = ack_inited = elect_inited = queue_inited = FALSE;
+/*
+ * PUBLIC: int __repmgr_destroy_mutex_pf __P((mgr_mutex_t *));
+ */
+int
+__repmgr_destroy_mutex_pf(mutex)
+	mgr_mutex_t *mutex;
+{
+	return (pthread_mutex_destroy(mutex));
+}
 
-	if ((ret = pthread_mutex_init(&db_rep->mutex, NULL)) != 0)
-		goto err;
-	mutex_inited = TRUE;
+/*
+ * PUBLIC: int __repmgr_init __P((ENV *));
+ */
+int
+__repmgr_init(env)
+	ENV *env;
+{
+	DB_REP *db_rep;
+	struct sigaction sigact;
+	int ack_inited, elect_inited, file_desc[2], queue_inited, rereq_inited;
+	int ret;
 
+	db_rep = env->rep_handle;
+
+	/*
+	 * Make sure we're not ignoring SIGPIPE, 'cuz otherwise we'd be killed
+	 * just for trying to write onto a socket that had been reset.  Note
+	 * that we don't undo this in case of a later error, since we document
+	 * that we leave the signal handling state like this, even after env
+	 * close.
+	 */
+	if (sigaction(SIGPIPE, NULL, &sigact) == -1) {
+		ret = errno;
+		__db_err(env, ret, "can't access signal handler");
+		return (ret);
+	}
+	if (sigact.sa_handler == SIG_DFL) {
+		sigact.sa_handler = SIG_IGN;
+		sigact.sa_flags = 0;
+		if (sigaction(SIGPIPE, &sigact, NULL) == -1) {
+			ret = errno;
+			__db_err(env, ret, "can't access signal handler");
+			return (ret);
+		}
+	}
+
+	ack_inited = elect_inited = queue_inited = rereq_inited = FALSE;
 	if ((ret = pthread_cond_init(&db_rep->ack_condition, NULL)) != 0)
 		goto err;
 	ack_inited = TRUE;
@@ -315,7 +352,11 @@ __repmgr_init_sync(env, db_rep)
 		goto err;
 	elect_inited = TRUE;
 
-	if ((ret = pthread_cond_init(&db_rep->queue_nonempty, NULL)) != 0)
+	if ((ret = pthread_cond_init(&db_rep->check_rereq, NULL)) != 0)
+		goto err;
+	rereq_inited = TRUE;
+
+	if ((ret = pthread_cond_init(&db_rep->msg_avail, NULL)) != 0)
 		goto err;
 	queue_inited = TRUE;
 
@@ -329,26 +370,23 @@ __repmgr_init_sync(env, db_rep)
 	return (0);
 err:
 	if (queue_inited)
-		(void)pthread_cond_destroy(&db_rep->queue_nonempty);
+		(void)pthread_cond_destroy(&db_rep->msg_avail);
+	if (rereq_inited)
+		(void)pthread_cond_destroy(&db_rep->check_rereq);
 	if (elect_inited)
 		(void)pthread_cond_destroy(&db_rep->check_election);
 	if (ack_inited)
 		(void)pthread_cond_destroy(&db_rep->ack_condition);
-	if (mutex_inited)
-		(void)pthread_mutex_destroy(&db_rep->mutex);
-	db_rep->read_pipe = db_rep->write_pipe = -1;
+	db_rep->read_pipe = db_rep->write_pipe = NO_SUCH_FILE_DESC;
 
 	return (ret);
 }
 
 /*
- * PUBLIC: int __repmgr_close_sync __P((ENV *));
- *
- * Frees the thread synchronization data within a repmgr struct, in a
- * platform-specific way.
+ * PUBLIC: int __repmgr_deinit __P((ENV *));
  */
 int
-__repmgr_close_sync(env)
+__repmgr_deinit(env)
 	ENV *env;
 {
 	DB_REP *db_rep;
@@ -356,10 +394,14 @@ __repmgr_close_sync(env)
 
 	db_rep = env->rep_handle;
 
-	if (!(REPMGR_SYNC_INITED(db_rep)))
+	if (!(REPMGR_INITED(db_rep)))
 		return (0);
 
-	ret = pthread_cond_destroy(&db_rep->queue_nonempty);
+	ret = pthread_cond_destroy(&db_rep->msg_avail);
+
+	if ((t_ret = pthread_cond_destroy(&db_rep->check_rereq)) != 0 &&
+	    ret == 0)
+		ret = t_ret;
 
 	if ((t_ret = pthread_cond_destroy(&db_rep->check_election)) != 0 &&
 	    ret == 0)
@@ -369,64 +411,12 @@ __repmgr_close_sync(env)
 	    ret == 0)
 		ret = t_ret;
 
-	if ((t_ret = pthread_mutex_destroy(&db_rep->mutex)) != 0 &&
-	    ret == 0)
-		ret = t_ret;
-
 	if (close(db_rep->read_pipe) == -1 && ret == 0)
 		ret = errno;
 	if (close(db_rep->write_pipe) == -1 && ret == 0)
 		ret = errno;
 
-	db_rep->read_pipe = db_rep->write_pipe = -1;
-	return (ret);
-}
-
-/*
- * Performs net-related resource initialization other than memory initialization
- * and allocation.  A valid db_rep->listen_fd acts as the "all-or-nothing"
- * sentinel signifying that these resources are allocated.
- *
- * PUBLIC: int __repmgr_net_init __P((ENV *, DB_REP *));
- */
-int
-__repmgr_net_init(env, db_rep)
-	ENV *env;
-	DB_REP *db_rep;
-{
-	int ret;
-	struct sigaction sigact;
-
-	if ((ret = __repmgr_listen(env)) != 0)
-		return (ret);
-
-	/*
-	 * Make sure we're not ignoring SIGPIPE, 'cuz otherwise we'd be killed
-	 * just for trying to write onto a socket that had been reset.
-	 */
-	if (sigaction(SIGPIPE, NULL, &sigact) == -1) {
-		ret = errno;
-		__db_err(env, ret, "can't access signal handler");
-		goto err;
-	}
-	/*
-	 * If we need to change the sig handler, do so, and also set a flag so
-	 * that we remember we did.
-	 */
-	if ((db_rep->chg_sig_handler = (sigact.sa_handler == SIG_DFL))) {
-		sigact.sa_handler = SIG_IGN;
-		sigact.sa_flags = 0;
-		if (sigaction(SIGPIPE, &sigact, NULL) == -1) {
-			ret = errno;
-			__db_err(env, ret, "can't access signal handler");
-			goto err;
-		}
-	}
-	return (0);
-
-err:
-	(void)closesocket(db_rep->listen_fd);
-	db_rep->listen_fd = INVALID_SOCKET;
+	db_rep->read_pipe = db_rep->write_pipe = NO_SUCH_FILE_DESC;
 	return (ret);
 }
 
@@ -466,6 +456,28 @@ __repmgr_signal(v)
 }
 
 /*
+ * Wake repmgr message processing threads, expressly for the purpose of shutting
+ * some subset of them down.
+ *
+ * !!!
+ * Caller must hold mutex.
+ *
+ * PUBLIC: int __repmgr_wake_msngers __P((ENV*, u_int));
+ */
+int
+__repmgr_wake_msngers(env, n)
+	ENV *env;
+	u_int n;
+{
+	DB_REP *db_rep;
+
+	COMPQUIET(n, 0);
+
+	db_rep = env->rep_handle;
+	return (__repmgr_signal(&db_rep->msg_avail));
+}
+
+/*
  * PUBLIC: int __repmgr_wake_main_thread __P((ENV*));
  */
 int
@@ -483,7 +495,7 @@ __repmgr_wake_main_thread(env)
 	 * byte in the stream is enough to wake up the select() thread reading
 	 * the pipe.
 	 */
-	if (write(db_rep->write_pipe, &any_value, 1) == -1)
+	if (write(db_rep->write_pipe, VOID_STAR_CAST &any_value, 1) == -1)
 		return (errno);
 	return (0);
 }
@@ -498,10 +510,14 @@ __repmgr_writev(fd, iovec, buf_count, byte_count_p)
 	int buf_count;
 	size_t *byte_count_p;
 {
-	int nw;
+	int nw, result;
 
-	if ((nw = writev(fd, iovec, buf_count)) == -1)
-		return (errno);
+	if ((nw = writev(fd, iovec, buf_count)) == -1) {
+		/* Why?  See note at __repmgr_readv(). */
+		result = errno;
+		DB_ASSERT(NULL, result != 0);
+		return (result);
+	}
 	*byte_count_p = (size_t)nw;
 	return (0);
 }
@@ -516,10 +532,21 @@ __repmgr_readv(fd, iovec, buf_count, byte_count_p)
 	int buf_count;
 	size_t *byte_count_p;
 {
+	int result;
 	ssize_t nw;
 
-	if ((nw = readv(fd, iovec, buf_count)) == -1)
-		return (errno);
+	if ((nw = readv(fd, iovec, buf_count)) == -1) {
+		/*
+		 * Why bother to assert this obvious "truth"?  On some systems
+		 * when the library is loaded into a single-threaded Tcl
+		 * configuration the differing errno mechanisms apparently
+		 * conflict, and we occasionally "see" a 0 value here!  And that
+		 * turns out to be painful to debug.
+		 */
+		result = errno;
+		DB_ASSERT(NULL, result != 0);
+		return (result);
+	}
 	*byte_count_p = (size_t)nw;
 	return (0);
 }
@@ -533,13 +560,11 @@ __repmgr_select_loop(env)
 {
 	struct timeval select_timeout, *select_timeout_p;
 	DB_REP *db_rep;
-	REPMGR_CONNECTION *conn, *next;
 	db_timespec timeout;
 	fd_set reads, writes;
-	int ret, flow_control, maxfd;
+	struct io_info io_info;
+	int ret;
 	u_int8_t buf[10];	/* arbitrary size */
-
-	flow_control = FALSE;
 
 	db_rep = env->rep_handle;
 	/*
@@ -555,60 +580,24 @@ __repmgr_select_loop(env)
 		FD_ZERO(&writes);
 
 		/*
-		 * Always ask for input on listening socket and signalling
-		 * pipe.
+		 * Figure out which sockets to ask for input and output.  It's
+		 * simple for the signalling pipe and listen socket; but depends
+		 * on backlog states for the connections to other sites.
 		 */
-		FD_SET((u_int)db_rep->listen_fd, &reads);
-		maxfd = db_rep->listen_fd;
-
 		FD_SET((u_int)db_rep->read_pipe, &reads);
-		if (db_rep->read_pipe > maxfd)
-			maxfd = db_rep->read_pipe;
+		io_info.maxfd = db_rep->read_pipe;
 
-		/*
-		 * Examine all connections to see what sort of I/O to ask for on
-		 * each one.  Clean up defunct connections; note that this is
-		 * the only place where elements get deleted from this list.
-		 *
-		 * The TAILQ_FOREACH macro would be suitable here, except that
-		 * it doesn't allow unlinking the current element., which is
-		 * needed for cleanup_connection.
-		 */
-		for (conn = TAILQ_FIRST(&db_rep->connections);
-		     conn != NULL;
-		     conn = next) {
-			next = TAILQ_NEXT(conn, entries);
-
-			if (conn->state == CONN_DEFUNCT) {
-				if ((ret = __repmgr_cleanup_connection(env,
-				    conn)) != 0)
-					goto out;
-				continue;
-			}
-
-			if (conn->state == CONN_CONNECTING) {
-				FD_SET((u_int)conn->fd, &reads);
-				FD_SET((u_int)conn->fd, &writes);
-				if (conn->fd > maxfd)
-					maxfd = conn->fd;
-				continue;
-			}
-
-			if (!STAILQ_EMPTY(&conn->outbound_queue)) {
-				FD_SET((u_int)conn->fd, &writes);
-				if (conn->fd > maxfd)
-					maxfd = conn->fd;
-			}
-			/*
-			 * If we haven't yet gotten site's handshake, then read
-			 * from it even if we're flow-controlling.
-			 */
-			if (!flow_control || !IS_VALID_EID(conn->eid)) {
-				FD_SET((u_int)conn->fd, &reads);
-				if (conn->fd > maxfd)
-					maxfd = conn->fd;
-			}
+		if (!IS_SUBORDINATE(db_rep)) {
+			FD_SET((u_int)db_rep->listen_fd, &reads);
+			if (db_rep->listen_fd > io_info.maxfd)
+				io_info.maxfd = db_rep->listen_fd;
 		}
+
+		io_info.reads = &reads;
+		io_info.writes = &writes;
+		if ((ret = __repmgr_each_connection(env,
+		    prepare_io, &io_info, TRUE)) != 0)
+			goto out;
 
 		if (__repmgr_compute_timeout(env, &timeout)) {
 			/* Convert the timespec to a timeval. */
@@ -622,7 +611,7 @@ __repmgr_select_loop(env)
 
 		UNLOCK_MUTEX(db_rep->mutex);
 
-		if ((ret = select(maxfd + 1,
+		if ((ret = select(io_info.maxfd + 1,
 		    &reads, &writes, NULL, select_timeout_p)) == -1) {
 			switch (ret = errno) {
 			case EINTR:
@@ -635,6 +624,10 @@ __repmgr_select_loop(env)
 			}
 		}
 		LOCK_MUTEX(db_rep->mutex);
+		if (db_rep->finished) {
+			ret = 0;
+			goto out;
+		}
 
 		/*
 		 * Timer expiration events include retrying of lost connections.
@@ -643,38 +636,26 @@ __repmgr_select_loop(env)
 		if ((ret = __repmgr_check_timeouts(env)) != 0)
 			goto out;
 
-		/*
-		 * Examine each connection, to see what work needs to be done.
-		 * Except for one obscure case in finish_connecting, no
-		 * structural change to the connections list happens here.
-		 */
-		TAILQ_FOREACH(conn, &db_rep->connections, entries) {
-			if (conn->state == CONN_DEFUNCT)
-				continue;
-
-			if ((ret = __repmgr_conn_work(env,
-			    conn, &reads, &writes, flow_control)) != 0)
-				goto out;
-		}
+		if ((ret = __repmgr_each_connection(env,
+		    __repmgr_conn_work, &io_info, TRUE)) != 0)
+			goto out;
 
 		/*
 		 * Read any bytes in the signalling pipe.  Note that we don't
 		 * actually need to do anything with them; they're just there to
 		 * wake us up when necessary.
 		 */
-		if (FD_ISSET((u_int)db_rep->read_pipe, &reads)) {
-			if (read(db_rep->read_pipe, buf, sizeof(buf)) <= 0) {
-				ret = errno;
-				goto out;
-			} else if (db_rep->finished) {
-				ret = 0;
-				goto out;
-			}
+		if (FD_ISSET((u_int)db_rep->read_pipe, &reads) &&
+		    read(db_rep->read_pipe, VOID_STAR_CAST buf,
+		    sizeof(buf)) <= 0) {
+			ret = errno;
+			goto out;
 		}
 		/*
 		 * Obviously elements can be added to the connection list here.
 		 */
-		if (FD_ISSET((u_int)db_rep->listen_fd, &reads) &&
+		if (!IS_SUBORDINATE(db_rep) &&
+		    FD_ISSET((u_int)db_rep->listen_fd, &reads) &&
 		    (ret = __repmgr_accept(env)) != 0)
 			goto out;
 	}
@@ -683,30 +664,80 @@ out:
 	return (ret);
 }
 
+/*
+ * Examines a connection to see what sort of I/O to ask for.  Clean up defunct
+ * connections.
+ */
 static int
-__repmgr_conn_work(env, conn, reads, writes, flow_control)
+prepare_io(env, conn, info_)
 	ENV *env;
 	REPMGR_CONNECTION *conn;
-	fd_set *reads, *writes;
-	int flow_control;
+	void *info_;
 {
+	struct io_info *info;
+
+	info = info_;
+
+	if (conn->state == CONN_DEFUNCT)
+		return (__repmgr_cleanup_connection(env, conn));
+
+	if (conn->state == CONN_CONNECTING) {
+		FD_SET((u_int)conn->fd, info->reads);
+		FD_SET((u_int)conn->fd, info->writes);
+		if (conn->fd > info->maxfd)
+			info->maxfd = conn->fd;
+		return (0);
+	}
+
+	if (!STAILQ_EMPTY(&conn->outbound_queue)) {
+		FD_SET((u_int)conn->fd, info->writes);
+		if (conn->fd > info->maxfd)
+			info->maxfd = conn->fd;
+	}
+	/*
+	 * For now we always accept incoming data.  If we ever implement some
+	 * kind of flow control, we should override it for fledgling connections
+	 * (!IS_VALID_EID(conn->eid)) -- in other words, allow reading such a
+	 * connection even during flow control duress.
+	 */
+	FD_SET((u_int)conn->fd, info->reads);
+	if (conn->fd > info->maxfd)
+		info->maxfd = conn->fd;
+
+	return (0);
+}
+
+/*
+ * Examine a connection, to see what work needs to be done.
+ */
+static int
+__repmgr_conn_work(env, conn, info_)
+	ENV *env;
+	REPMGR_CONNECTION *conn;
+	void *info_;
+{
+	struct io_info *info;
 	int ret;
 	u_int fd;
 
 	ret = 0;
 	fd = (u_int)conn->fd;
+	info = info_;
+
+	if (conn->state == CONN_DEFUNCT)
+		return (0);
 
 	if (conn->state == CONN_CONNECTING) {
-		if (FD_ISSET(fd, reads) || FD_ISSET(fd, writes))
+		if (FD_ISSET(fd, info->reads) || FD_ISSET(fd, info->writes))
 			ret = finish_connecting(env, conn);
 	} else {
 		/*
 		 * Here, the site is connected, and the FD_SET's are valid.
 		 */
-		if (FD_ISSET(fd, writes))
+		if (FD_ISSET(fd, info->writes))
 			ret = __repmgr_write_some(env, conn);
 
-		if (ret == 0 && !flow_control && FD_ISSET(fd, reads))
+		if (ret == 0 && FD_ISSET(fd, info->reads))
 			ret = __repmgr_read_from_site(env, conn);
 	}
 
@@ -727,6 +758,12 @@ finish_connecting(env, conn)
 	u_int eid;
 	int error, ret;
 
+	db_rep = env->rep_handle;
+
+	DB_ASSERT(env, IS_VALID_EID(conn->eid));
+	eid = (u_int)conn->eid;
+	site = SITE_FROM_EID(eid);
+
 	len = sizeof(error);
 	if (getsockopt(
 	    conn->fd, SOL_SOCKET, SO_ERROR, (sockopt_t)&error, &len) < 0)
@@ -737,15 +774,10 @@ finish_connecting(env, conn)
 	}
 
 	conn->state = CONN_CONNECTED;
+	__os_gettime(env, &site->last_rcvd_timestamp, 1);
 	return (__repmgr_propose_version(env, conn));
 
 err_rpt:
-	db_rep = env->rep_handle;
-
-	DB_ASSERT(env, IS_VALID_EID(conn->eid));
-	eid = (u_int)conn->eid;
-
-	site = SITE_FROM_EID(eid);
 	__db_err(env, errno,
 	    "connecting to %s", __repmgr_format_site_loc(site, buffer));
 
@@ -759,7 +791,7 @@ err_rpt:
 	 * Since we're immediately trying the next address in the list, simply
 	 * disable the failed connection, without the usual recovery.
 	 */
-	DISABLE_CONNECTION(conn);
+	__repmgr_disable_connection(env, conn);
 
 	ret = __repmgr_connect_site(env, eid);
 	DB_ASSERT(env, ret != DB_REP_UNAVAIL);

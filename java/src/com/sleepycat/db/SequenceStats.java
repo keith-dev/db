@@ -4,7 +4,7 @@
  *
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2002,2008 Oracle.  All rights reserved.
+ * Copyright (c) 2002, 2010 Oracle and/or its affiliates.  All rights reserved.
  */
 
 package com.sleepycat.db;
@@ -16,21 +16,21 @@ public class SequenceStats {
     // no public constructor
     /* package */ SequenceStats() {}
 
-    private int st_wait;
+    private long st_wait;
     /**
     The number of times a thread of control was forced to wait on the
     handle mutex.
     */
-    public int getWait() {
+    public long getWait() {
         return st_wait;
     }
 
-    private int st_nowait;
+    private long st_nowait;
     /**
     The number of times that a thread of control was able to obtain handle
     mutex without waiting.
     */
-    public int getNowait() {
+    public long getNowait() {
         return st_nowait;
     }
 

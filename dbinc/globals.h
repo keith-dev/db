@@ -1,9 +1,9 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1996,2008 Oracle.  All rights reserved.
+ * Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
  *
- * $Id: globals.h,v 12.12 2008/01/17 03:26:48 bostic Exp $
+ * $Id$
  */
 
 #ifndef _DB_GLOBALS_H_
@@ -30,8 +30,6 @@ typedef struct __db_globals {
 	u_int32_t db_global_init;	/* VxWorks: inited */
 	SEM_ID db_global_lock;		/* VxWorks: global semaphore */
 #endif
-					/* XA: list of opened environments. */
-	TAILQ_HEAD(__envq, __env) envq;
 
 	char *db_line;			/* DB display string. */
 
@@ -75,49 +73,7 @@ typedef struct __db_globals {
 #define	DB_GLOBAL(v)							\
 	((DB_GLOBALS *)(((BDBApp *)GETAPPINSTANCE())->db_global_values))->v
 #else
-#ifdef DB_INITIALIZE_DB_GLOBALS
-DB_GLOBALS __db_global_values = {
-#ifdef HAVE_VXWORKS
-	0,				/* VxWorks: initialized */
-	NULL,				/* VxWorks: global semaphore */
-#endif
-					/* XA: list of opened environments. */
-	{NULL, &__db_global_values.envq.tqh_first},
-
-	"=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=",
-	{ 0 },
-	0,
-	0,
-	0,
-	0,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL
-};
-#else
 extern	DB_GLOBALS	__db_global_values;
-#endif
-
 #define	DB_GLOBAL(v)	__db_global_values.v
 #endif /* HAVE_BREW */
 

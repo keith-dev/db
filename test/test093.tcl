@@ -1,8 +1,8 @@
 # See the file LICENSE for redistribution information.
 #
-# Copyright (c) 1996,2008 Oracle.  All rights reserved.
+# Copyright (c) 1996, 2010 Oracle and/or its affiliates.  All rights reserved.
 #
-# $Id: test093.tcl,v 12.10 2008/01/23 15:14:55 carol Exp $
+# $Id$
 #
 # TEST	test093
 # TEST	Test set_bt_compare (btree key comparison function) and
@@ -30,6 +30,22 @@ proc test093 { method {nentries 10000} {tnum "093"} args} {
 		puts "Test$tnum: skipping for method $method."
 		return
 	}
+
+	# Verification fails for 64k pages on some systems because
+	# verify's private mpool gets filled.  The Tcl API doesn't
+	# currently allow for resizing this cache.  Just skip the 
+	# test for 64k pages because it's not adding much anyway.
+	#
+	set pagesize 0
+        set pgindex [lsearch -exact $args "-pagesize"]
+        if { $pgindex != -1 } {
+                incr pgindex
+		set pagesize [lindex $args $pgindex]
+		if { $pagesize >= "65536" }  {
+			puts "Skipping test$tnum for 64k pages."
+			return 
+		}
+        }
 
 	set txnenv 0
 	set eindex [lsearch -exact $dbargs "-env"]
@@ -76,8 +92,8 @@ proc test093 { method {nentries 10000} {tnum "093"} args} {
 	# Don't bother running the second, really slow, comparison
 	# function on test093_runbig (file contents).
 
-	# Clean up so verification doesn't fail.  (There's currently
-	# no way to specify a comparison function to berkdb dbverify.)
+	# Clean up so general verification (without the custom comparison
+	# function) doesn't fail.
 	if { $env != "NULL" } {
 		set testdir [get_home $env]
 	}
@@ -89,6 +105,11 @@ proc test093_run { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 	global btvals
 	global btvalsck
 
+	# We'll need any encryption args separated from the db args
+	# so we can pass them to dbverify.
+	set encargs ""
+	set dbargs [split_encargs $dbargs encargs]
+
 	# If we are using an env, then testfile should just be the db name.
 	# Otherwise it is the test directory and the name.
 	set eindex [lsearch -exact $dbargs "-env"]
@@ -96,17 +117,19 @@ proc test093_run { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 	if { $eindex == -1 } {
 		set testfile $testdir/test$tnum.db
 		set env NULL
+		set envargs ""
 	} else {
 		set testfile test$tnum.db
 		incr eindex
 		set env [lindex $dbargs $eindex]
+		set envargs " -env $env "
 		set txnenv [is_txnenv $env]
 		set testdir [get_home $env]
 	}
 	cleanup $testdir $env
 
 	set db [eval {berkdb_open $compflag $cmpfunc \
-	     -create -mode 0644} $method $dbargs $testfile]
+	     -create -mode 0644} $method $encargs $dbargs $testfile]
 	error_check_good dbopen [is_valid_db $db] TRUE
 	set did [open $dict]
 
@@ -163,6 +186,12 @@ proc test093_run { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 	}
 	error_check_good db_close [$db close] 0
 
+	# Run verify to check the internal structure and order.
+	if { [catch {eval {berkdb dbverify} $compflag $cmpfunc\
+	    $envargs $encargs {$testfile}} res] } {
+		error "FAIL: Verification failed with $res"
+	}
+
 	# Now compare the keys to see if they match the dictionary (or ints)
 	filehead $nentries $dict $t2
 	filesort $t2 $t3
@@ -179,7 +208,7 @@ proc test093_run { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 	# call dump_file_direction directly.
 	set btvalsck {}
 	set db [eval {berkdb_open $compflag $cmpfunc -rdonly} \
-	     $dbargs $method $testfile]
+	     $dbargs $encargs $method $testfile]
 	error_check_good dbopen [is_valid_db $db] TRUE
 	if { $txnenv == 1 } {
 		set t [$env txn]
@@ -192,7 +221,7 @@ proc test093_run { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 	}
 	error_check_good db_close [$db close] 0
 
-	if { [is_hash $method] == 1 } {
+	if { [is_hash $method] == 1 || [is_partition_callback $dbargs] == 1 } {
 		return
 	}
 
@@ -214,6 +243,11 @@ proc test093_runbig { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 	global btvals
 	global btvalsck
 
+	# We'll need any encryption args separated from the db args
+	# so we can pass them to dbverify.
+	set encargs ""
+	set dbargs [split_encargs $dbargs encargs]
+
 	# Create the database and open the dictionary
 	set eindex [lsearch -exact $dbargs "-env"]
 	#
@@ -223,17 +257,19 @@ proc test093_runbig { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 	if { $eindex == -1 } {
 		set testfile $testdir/test$tnum.db
 		set env NULL
+		set envargs ""
 	} else {
 		set testfile test$tnum.db
 		incr eindex
 		set env [lindex $dbargs $eindex]
+		set envargs " -env $env "
 		set txnenv [is_txnenv $env]
 		set testdir [get_home $env]
 	}
 	cleanup $testdir $env
 
 	set db [eval {berkdb_open $compflag $cmpfunc \
-	     -create -mode 0644} $method $dbargs $testfile]
+	     -create -mode 0644} $method $encargs $dbargs $testfile]
 	error_check_good dbopen [is_valid_db $db] TRUE
 
 	set t1 $testdir/t1
@@ -309,6 +345,12 @@ proc test093_runbig { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 	}
 	error_check_good db_close [$db close] 0
 
+	# Run verify to check the internal structure and order.
+	if { [catch {eval {berkdb dbverify} $compflag $cmpfunc\
+	    $envargs $encargs {$testfile}} res] } {
+		error "FAIL: Verification failed with $res"
+	}
+
 	puts "\tTest$tnum.g: dump file in order"
 	# Now, reopen the file and run the last test again.
 	# We open it here, ourselves, because all uses of the db
@@ -317,7 +359,7 @@ proc test093_runbig { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 
 	set btvalsck {}
 	set db [eval {berkdb_open $compflag $cmpfunc -rdonly} \
-	     $dbargs $method $testfile]
+	     $encargs $dbargs $method $testfile]
 	error_check_good dbopen [is_valid_db $db] TRUE
 	if { $txnenv == 1 } {
 		set t [$env txn]
@@ -330,7 +372,7 @@ proc test093_runbig { method dbargs nentries tnum compflag cmpfunc sortfunc } {
 	}
 	error_check_good db_close [$db close] 0
 
-	if { [is_hash $method] == 1 } {
+	if { [is_hash $method] == 1 || [is_partition_callback $dbargs] == 1 } {
 		return
 	}
 
