@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997-2001
+ * Copyright (c) 1997-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: DbLock.java,v 11.7 2001/07/26 23:22:34 dda Exp $
+ * $Id: DbLock.java,v 11.8 2002/01/11 15:52:36 bostic Exp $
  */
 
 package com.sleepycat.db;

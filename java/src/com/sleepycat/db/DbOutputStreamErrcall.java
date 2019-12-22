@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997-2001
+ * Copyright (c) 1997-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: DbOutputStreamErrcall.java,v 11.5 2001/05/16 13:09:30 bostic Exp $
+ * $Id: DbOutputStreamErrcall.java,v 11.6 2002/01/11 15:52:39 bostic Exp $
  */
 
 package com.sleepycat.db;

@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2000-2001
+ * Copyright (c) 2000-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: DbBtreeCompare.java,v 11.5 2001/07/02 01:03:21 bostic Exp $
+ * $Id: DbBtreeCompare.java,v 11.6 2002/01/11 15:52:33 bostic Exp $
  */
 
 package com.sleepycat.db;

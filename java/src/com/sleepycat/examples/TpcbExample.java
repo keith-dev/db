@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997-2001
+ * Copyright (c) 1997-2002
  *	Sleepycat Software.  All rights reserved.
  *
- * $Id: TpcbExample.java,v 11.12 2001/04/28 19:02:23 dda Exp $
+ * $Id: TpcbExample.java,v 11.16 2002/02/13 06:08:35 mjc Exp $
  */
 
 package com.sleepycat.examples;
@@ -121,8 +121,8 @@ class TpcbExample extends DbEnv
         try {
             dbp = new Db(this, 0);
             dbp.set_h_nelem(h_nelem);
-            dbp.open("account", null,
-                     Db.DB_HASH, Db.DB_CREATE | Db.DB_TRUNCATE, 0644);
+            dbp.open(null, "account", null, Db.DB_HASH,
+                     Db.DB_CREATE | Db.DB_TRUNCATE, 0644);
         }
         // can be DbException or FileNotFoundException
         catch (Exception e1) {
@@ -158,8 +158,8 @@ class TpcbExample extends DbEnv
             dbp.set_h_ffactor(1);
             dbp.set_pagesize(512);
 
-            dbp.open("branch", null,
-                     Db.DB_HASH, Db.DB_CREATE | Db.DB_TRUNCATE, 0644);
+            dbp.open(null, "branch", null, Db.DB_HASH,
+	             Db.DB_CREATE | Db.DB_TRUNCATE, 0644);
         }
         // can be DbException or FileNotFoundException
         catch (Exception e3) {
@@ -195,8 +195,8 @@ class TpcbExample extends DbEnv
             dbp.set_h_ffactor(0);
             dbp.set_pagesize(512);
 
-            dbp.open("teller", null,
-                     Db.DB_HASH, Db.DB_CREATE | Db.DB_TRUNCATE, 0644);
+            dbp.open(null, "teller", null, Db.DB_HASH,
+	             Db.DB_CREATE | Db.DB_TRUNCATE, 0644);
         }
         // can be DbException or FileNotFoundException
         catch (Exception e5) {
@@ -222,8 +222,8 @@ class TpcbExample extends DbEnv
         try {
             dbp = new Db(this, 0);
             dbp.set_re_len(HISTORY_LEN);
-            dbp.open("history", null,
-                     Db.DB_RECNO, Db.DB_CREATE | Db.DB_TRUNCATE, 0644);
+            dbp.open(null, "history", null, Db.DB_RECNO,
+	             Db.DB_CREATE | Db.DB_TRUNCATE, 0644);
         }
         // can be DbException or FileNotFoundException
         catch (Exception e7) {
@@ -353,13 +353,17 @@ class TpcbExample extends DbEnv
         int err;
         try {
             adb = new Db(this, 0);
-            adb.open("account", null, Db.DB_UNKNOWN, 0, 0);
+            adb.open(null, "account", null, Db.DB_UNKNOWN,
+                     Db.DB_AUTO_COMMIT, 0);
             bdb = new Db(this, 0);
-            bdb.open("branch", null, Db.DB_UNKNOWN, 0, 0);
+            bdb.open(null, "branch", null, Db.DB_UNKNOWN,
+                     Db.DB_AUTO_COMMIT, 0);
             tdb = new Db(this, 0);
-            tdb.open("teller", null, Db.DB_UNKNOWN, 0, 0);
+            tdb.open(null, "teller", null, Db.DB_UNKNOWN,
+                     Db.DB_AUTO_COMMIT, 0);
             hdb = new Db(this, 0);
-            hdb.open("history", null, Db.DB_UNKNOWN, 0, 0);
+            hdb.open(null, "history", null, Db.DB_UNKNOWN,
+                     Db.DB_AUTO_COMMIT, 0);
         }
         catch (DbException dbe) {
             errExit(dbe, "Open of db files failed");

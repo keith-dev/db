@@ -1,4 +1,4 @@
-// DO NOT EDIT: automatically built by dist/s_java.
+/* DO NOT EDIT: automatically built by dist/s_java. */
 
 package com.sleepycat.db;
 

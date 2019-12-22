@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2001
+ * Copyright (c) 2001-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: DbUtil.java,v 11.3 2001/07/02 01:03:23 bostic Exp $
+ * $Id: DbUtil.java,v 11.5 2002/01/11 15:52:41 bostic Exp $
  */
 
 package com.sleepycat.db;
@@ -91,8 +91,8 @@ class DbUtil
         }
     }
 
-    private static final boolean big_endian = am_big_endian();
-    private static native boolean am_big_endian();
+    private static final boolean big_endian = is_big_endian();
+    private static native boolean is_big_endian();
 }
 
 // end of DbUtil.java

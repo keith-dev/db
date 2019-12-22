@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1999-2001
+ * Copyright (c) 1999-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: DbPreplist.java,v 11.2 2001/05/16 13:09:30 bostic Exp $
+ * $Id: DbPreplist.java,v 11.3 2002/01/11 15:52:40 bostic Exp $
  */
 
 package com.sleepycat.db;

@@ -1,13 +1,18 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997-2001
+ * Copyright (c) 1997-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: Dbt.java,v 11.12 2001/07/02 01:03:24 bostic Exp $
+ * $Id: Dbt.java,v 11.15 2002/09/04 00:37:25 mjc Exp $
  */
 
 package com.sleepycat.db;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 
 /**
  *
@@ -40,6 +45,12 @@ public class Dbt
         init();
     }
 
+    public Dbt(Object serialobj) throws java.io.IOException
+    {
+        init();
+        this.set_object(serialobj);
+    }
+
     protected native void finalize()
          throws Throwable;
 
@@ -47,7 +58,6 @@ public class Dbt
     //
 
     // key/data
-
     public byte[] get_data()
     {
         // In certain circumstances, like callbacks to
@@ -140,6 +150,30 @@ public class Dbt
         this.flags = flags;
     }
 
+    // Helper methods to get/set a Dbt from a serializable object.
+    public Object get_object() throws java.io.IOException,
+      java.lang.ClassNotFoundException
+    {
+        ByteArrayInputStream bytestream = new ByteArrayInputStream(get_data());
+        ObjectInputStream ois = new ObjectInputStream(bytestream);
+        Object serialobj = ois.readObject();
+        ois.close();
+        bytestream.close();
+        return (serialobj);
+    }
+
+    public void set_object(Object serialobj) throws java.io.IOException
+    {
+        ByteArrayOutputStream bytestream = new ByteArrayOutputStream();
+        ObjectOutputStream oos = new ObjectOutputStream(bytestream);
+        oos.writeObject(serialobj);
+        oos.close();
+        byte[] buf = bytestream.toByteArray();
+        bytestream.close();
+        set_data(buf);
+        set_offset(0);
+        set_size(buf.length);
+    }
 
     // These are not in the original DB interface.
     // They can be used to set the recno key for a Dbt.
@@ -178,7 +212,6 @@ public class Dbt
     //
     private native void init();
     private native byte[] create_data();
-    private static native boolean is_big_endian();
 
     // private data
     //
@@ -192,8 +225,6 @@ public class Dbt
     private int doff = 0;
     private int flags = 0;
     private boolean must_create_data = false;
-
-    private static boolean big_endian = is_big_endian();
 }
 
 // end of Dbt.java

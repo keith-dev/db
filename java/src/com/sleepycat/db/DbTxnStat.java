@@ -1,4 +1,4 @@
-// DO NOT EDIT: automatically built by dist/s_java.
+/* DO NOT EDIT: automatically built by dist/s_java. */
 
 package com.sleepycat.db;
 
@@ -10,7 +10,6 @@ public class DbTxnStat
         public DbLsn lsn;
     };
     public DbLsn st_last_ckp;
-    public DbLsn st_pending_ckp;
     public long st_time_ckp;
     public int st_last_txnid;
     public int st_maxtxns;

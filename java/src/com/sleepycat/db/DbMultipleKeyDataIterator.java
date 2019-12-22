@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2001
+ * Copyright (c) 2001-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: DbMultipleKeyDataIterator.java,v 1.4 2001/07/02 01:03:23 bostic Exp $
+ * $Id: DbMultipleKeyDataIterator.java,v 1.5 2002/01/11 15:52:39 bostic Exp $
  */
 
 package com.sleepycat.db;

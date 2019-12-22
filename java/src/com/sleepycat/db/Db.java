@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997-2001
+ * Copyright (c) 1997-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: Db.java,v 11.79 2001/11/17 17:04:59 bostic Exp $
+ * $Id: Db.java,v 11.110 2002/09/09 20:47:31 bostic Exp $
  */
 
 package com.sleepycat.db;
@@ -19,62 +19,67 @@ import java.io.FileNotFoundException;
 public class Db
 {
     // BEGIN-JAVA-SPECIAL-CONSTANTS
-    // DO NOT EDIT: automatically built by dist/s_java.
+    /* DO NOT EDIT: automatically built by dist/s_java. */
     public static final int DB_BTREE = 1;
     public static final int DB_DONOTINDEX = -30999;
     public static final int DB_HASH = 2;
-    public static final int DB_INCOMPLETE = -30998;
-    public static final int DB_KEYEMPTY = -30997;
-    public static final int DB_KEYEXIST = -30996;
-    public static final int DB_LOCK_DEADLOCK = -30995;
-    public static final int DB_LOCK_NOTGRANTED = -30994;
-    public static final int DB_NOSERVER = -30993;
-    public static final int DB_NOSERVER_HOME = -30992;
-    public static final int DB_NOSERVER_ID = -30991;
-    public static final int DB_NOTFOUND = -30990;
-    public static final int DB_OLD_VERSION = -30989;
-    public static final int DB_PAGE_NOTFOUND = -30988;
+    public static final int DB_KEYEMPTY = -30998;
+    public static final int DB_KEYEXIST = -30997;
+    public static final int DB_LOCK_DEADLOCK = -30996;
+    public static final int DB_LOCK_NOTGRANTED = -30995;
+    public static final int DB_NOSERVER = -30994;
+    public static final int DB_NOSERVER_HOME = -30993;
+    public static final int DB_NOSERVER_ID = -30992;
+    public static final int DB_NOTFOUND = -30991;
+    public static final int DB_OLD_VERSION = -30990;
+    public static final int DB_PAGE_NOTFOUND = -30989;
     public static final int DB_QUEUE = 4;
     public static final int DB_RECNO = 3;
-    public static final int DB_REP_DUPMASTER = -30987;
-    public static final int DB_REP_HOLDELECTION = -30986;
-    public static final int DB_REP_NEWMASTER = -30985;
-    public static final int DB_REP_NEWSITE = -30984;
-    public static final int DB_REP_OUTDATED = -30983;
-    public static final int DB_RUNRECOVERY = -30981;
-    public static final int DB_SECONDARY_BAD = -30980;
+    public static final int DB_REP_DUPMASTER = -30988;
+    public static final int DB_REP_HOLDELECTION = -30987;
+    public static final int DB_REP_NEWMASTER = -30986;
+    public static final int DB_REP_NEWSITE = -30985;
+    public static final int DB_REP_OUTDATED = -30984;
+    public static final int DB_RUNRECOVERY = -30982;
+    public static final int DB_SECONDARY_BAD = -30981;
     public static final int DB_TXN_ABORT = 0;
     public static final int DB_TXN_APPLY = 1;
-    public static final int DB_TXN_BACKWARD_ROLL = 2;
-    public static final int DB_TXN_FORWARD_ROLL = 3;
+    public static final int DB_TXN_BACKWARD_ROLL = 3;
+    public static final int DB_TXN_FORWARD_ROLL = 4;
+    public static final int DB_TXN_PRINT = 8;
     public static final int DB_UNKNOWN = 5;
-    public static final int DB_VERIFY_BAD = -30979;
+    public static final int DB_VERIFY_BAD = -30980;
     public static final int DB_AFTER;
     public static final int DB_AGGRESSIVE;
     public static final int DB_APPEND;
     public static final int DB_ARCH_ABS;
     public static final int DB_ARCH_DATA;
     public static final int DB_ARCH_LOG;
+    public static final int DB_AUTO_COMMIT;
     public static final int DB_BEFORE;
     public static final int DB_CACHED_COUNTS;
     public static final int DB_CDB_ALLDB;
-    public static final int DB_CHECKPOINT;
+    public static final int DB_CHKSUM_SHA1;
     public static final int DB_CLIENT;
     public static final int DB_CONSUME;
     public static final int DB_CONSUME_WAIT;
     public static final int DB_CREATE;
-    public static final int DB_CURLSN;
     public static final int DB_CURRENT;
     public static final int DB_CXX_NO_EXCEPTIONS;
     public static final int DB_DBT_MALLOC;
     public static final int DB_DBT_PARTIAL;
     public static final int DB_DBT_REALLOC;
     public static final int DB_DBT_USERMEM;
+    public static final int DB_DIRECT;
+    public static final int DB_DIRECT_DB;
+    public static final int DB_DIRECT_LOG;
     public static final int DB_DIRTY_READ;
     public static final int DB_DUP;
     public static final int DB_DUPSORT;
     public static final int DB_EID_BROADCAST;
     public static final int DB_EID_INVALID;
+    public static final int DB_ENCRYPT;
+    public static final int DB_ENCRYPT_AES;
     public static final int DB_EXCL;
     public static final int DB_FAST_STAT;
     public static final int DB_FIRST;
@@ -129,10 +134,17 @@ public class Db
     public static final int DB_NOSYNC;
     public static final int DB_ODDFILESIZE;
     public static final int DB_ORDERCHKONLY;
+    public static final int DB_OVERWRITE;
     public static final int DB_PANIC_ENVIRONMENT;
     public static final int DB_POSITION;
     public static final int DB_PREV;
     public static final int DB_PREV_NODUP;
+    public static final int DB_PRINTABLE;
+    public static final int DB_PRIORITY_DEFAULT;
+    public static final int DB_PRIORITY_HIGH;
+    public static final int DB_PRIORITY_LOW;
+    public static final int DB_PRIORITY_VERY_HIGH;
+    public static final int DB_PRIORITY_VERY_LOW;
     public static final int DB_PRIVATE;
     public static final int DB_RDONLY;
     public static final int DB_RECNUM;
@@ -162,6 +174,7 @@ public class Db
     public static final int DB_TXN_NOSYNC;
     public static final int DB_TXN_NOWAIT;
     public static final int DB_TXN_SYNC;
+    public static final int DB_TXN_WRITE_NOSYNC;
     public static final int DB_UPGRADE;
     public static final int DB_USE_ENVIRON;
     public static final int DB_USE_ENVIRON_ROOT;
@@ -213,16 +226,16 @@ public class Db
     // methods
     //
 
-    public synchronized void associate(Db secondary,
+    public synchronized void associate(DbTxn txn, Db secondary,
                                        DbSecondaryKeyCreate key_creator,
                                        int flags)
         throws DbException
     {
         secondary.secondary_key_create_ = key_creator;
-        _associate(secondary, key_creator, flags);
+        _associate(txn, secondary, key_creator, flags);
     }
 
-    public native void _associate(Db secondary,
+    public native void _associate(DbTxn txn, Db secondary,
                                   DbSecondaryKeyCreate key_creator, int flags)
         throws DbException;
 
@@ -261,7 +274,10 @@ public class Db
     protected void finalize()
         throws Throwable
     {
-        _finalize(dbenv_.errcall_, dbenv_.errpfx_);
+        if (dbenv_ == null)
+            _finalize(null, null);
+        else
+            _finalize(dbenv_.errcall_, dbenv_.errpfx_);
     }
 
     protected native void _finalize(DbErrcall errcall, String errpfx)
@@ -278,21 +294,21 @@ public class Db
     public native Dbc join(Dbc curslist[], int flags)
          throws DbException;
 
-    public native void key_range(DbTxn txn, Dbt key,
+    public native void key_range(DbTxn txnid, Dbt key,
                                  DbKeyRange range, int flags)
          throws DbException;
 
-    public synchronized void open(String file, String database,
-                     /*DBTYPE*/ int type,
+    public synchronized void open(DbTxn txnid, String file,
+                     String database, /*DBTYPE*/ int type,
                      int flags, int mode)
          throws DbException, FileNotFoundException
     {
-        _open(file, database, type, flags, mode);
+        _open(txnid, file, database, type, flags, mode);
     }
 
     // (Internal)
-    public native void _open(String file, String database,
-                            /*DBTYPE*/ int type,
+    public native void _open(DbTxn txnid, String file,
+                            String database, /*DBTYPE*/ int type,
                             int flags, int mode)
          throws DbException, FileNotFoundException;
 
@@ -325,8 +341,8 @@ public class Db
         throws DbException, FileNotFoundException;
 
 
-    public synchronized void remove(String file, String database,
-                                           int flags)
+    public synchronized void remove(String file,
+                                           String database, int flags)
         throws DbException, FileNotFoundException
     {
         try {
@@ -392,6 +408,10 @@ public class Db
     public native void set_cachesize(int gbytes, int bytes, int ncaches)
         throws DbException;
 
+    // Set cache priority
+    public native void set_cache_priority(/* DB_CACHE_PRIORITY */ int priority)
+        throws DbException;
+
     // Duplication resolution
     public void set_dup_compare(DbDupCompare dup_compare)
         throws DbException
@@ -402,6 +422,10 @@ public class Db
 
     // (Internal)
     private native void dup_compare_changed(DbDupCompare dup_compare)
+        throws DbException;
+
+    // Encryption
+    public native void set_encrypt(String passwd, /*u_int32_t*/ int flags)
         throws DbException;
 
     // Error message callback.
@@ -439,10 +463,16 @@ public class Db
         throws DbException;
 
     // Flags.
-    public native void set_flags(/*u_int32_t*/ int flags);
+    public native void set_flags(/*u_int32_t*/ int flags)
+        throws DbException;
+
+    // Internal - only intended for testing purposes in the Java RPC server
+    public native int get_flags_raw()
+        throws DbException;
 
     // Fill factor.
-    public native void set_h_ffactor(/*unsigned*/ int h_ffactor);
+    public native void set_h_ffactor(/*unsigned*/ int h_ffactor)
+        throws DbException;
 
     // Hash function.
     public void set_h_hash(DbHash h_hash)
@@ -457,37 +487,45 @@ public class Db
         throws DbException;
 
     // Number of elements.
-    public native void set_h_nelem(/*unsigned*/ int h_nelem);
+    public native void set_h_nelem(/*unsigned*/ int h_nelem)
+        throws DbException;
 
     // Byte order.
-    public native void set_lorder(int lorder);
+    public native void set_lorder(int lorder)
+        throws DbException;
 
     // Underlying page size.
-    public native void set_pagesize(/*size_t*/ long pagesize);
+    public native void set_pagesize(/*size_t*/ long pagesize)
+        throws DbException;
 
     // Variable-length delimiting byte.
-    public native void set_re_delim(int re_delim);
+    public native void set_re_delim(int re_delim)
+        throws DbException;
 
     // Length for fixed-length records.
-    public native void set_re_len(/*u_int32_t*/ int re_len);
+    public native void set_re_len(/*u_int32_t*/ int re_len)
+        throws DbException;
 
     // Fixed-length padding byte.
-    public native void set_re_pad(int re_pad);
+    public native void set_re_pad(int re_pad)
+        throws DbException;
 
     // Source file name.
-    public native void set_re_source(String re_source);
+    public native void set_re_source(String re_source)
+        throws DbException;
 
     // Extent size of Queue
-    public native void set_q_extentsize(/*u_int32_t*/ int extent_size);
+    public native void set_q_extentsize(/*u_int32_t*/ int extent_size)
+        throws DbException;
 
     // returns a DbBtreeStat or DbHashStat
     public native Object stat(int flags)
          throws DbException;
 
-    public native int sync(int flags)
+    public native void sync(int flags)
          throws DbException;
 
-    public native int truncate(DbTxn txn, int flags)
+    public native int truncate(DbTxn txnid, int flags)
          throws DbException;
 
     public native void upgrade(String name, int flags)
@@ -528,9 +566,13 @@ public class Db
 
         // An alternate library name can be specified via a property.
         //
-        String overrideLibname = System.getProperty("sleepycat.db.libname");
-        if (overrideLibname != null) {
-            System.loadLibrary(overrideLibname);
+        String override;
+
+        if ((override = System.getProperty("sleepycat.db.libfile")) != null) {
+            System.load(override);
+        }
+        else if ((override = System.getProperty("sleepycat.db.libname")) != null) {
+            System.loadLibrary(override);
         }
         else {
             String os = System.getProperty("os.name");
@@ -568,33 +610,38 @@ public class Db
         Db.load_db();
 
         // BEGIN-JAVA-CONSTANT-INITIALIZATION
-        // DO NOT EDIT: automatically built by dist/s_java.
+        /* DO NOT EDIT: automatically built by dist/s_java. */
         DB_AFTER = DbConstants.DB_AFTER;
         DB_AGGRESSIVE = DbConstants.DB_AGGRESSIVE;
         DB_APPEND = DbConstants.DB_APPEND;
         DB_ARCH_ABS = DbConstants.DB_ARCH_ABS;
         DB_ARCH_DATA = DbConstants.DB_ARCH_DATA;
         DB_ARCH_LOG = DbConstants.DB_ARCH_LOG;
+        DB_AUTO_COMMIT = DbConstants.DB_AUTO_COMMIT;
         DB_BEFORE = DbConstants.DB_BEFORE;
         DB_CACHED_COUNTS = DbConstants.DB_CACHED_COUNTS;
         DB_CDB_ALLDB = DbConstants.DB_CDB_ALLDB;
-        DB_CHECKPOINT = DbConstants.DB_CHECKPOINT;
+        DB_CHKSUM_SHA1 = DbConstants.DB_CHKSUM_SHA1;
         DB_CLIENT = DbConstants.DB_CLIENT;
         DB_CONSUME = DbConstants.DB_CONSUME;
         DB_CONSUME_WAIT = DbConstants.DB_CONSUME_WAIT;
         DB_CREATE = DbConstants.DB_CREATE;
-        DB_CURLSN = DbConstants.DB_CURLSN;
         DB_CURRENT = DbConstants.DB_CURRENT;
         DB_CXX_NO_EXCEPTIONS = DbConstants.DB_CXX_NO_EXCEPTIONS;
         DB_DBT_MALLOC = DbConstants.DB_DBT_MALLOC;
         DB_DBT_PARTIAL = DbConstants.DB_DBT_PARTIAL;
         DB_DBT_REALLOC = DbConstants.DB_DBT_REALLOC;
         DB_DBT_USERMEM = DbConstants.DB_DBT_USERMEM;
+        DB_DIRECT = DbConstants.DB_DIRECT;
+        DB_DIRECT_DB = DbConstants.DB_DIRECT_DB;
+        DB_DIRECT_LOG = DbConstants.DB_DIRECT_LOG;
         DB_DIRTY_READ = DbConstants.DB_DIRTY_READ;
         DB_DUP = DbConstants.DB_DUP;
         DB_DUPSORT = DbConstants.DB_DUPSORT;
         DB_EID_BROADCAST = DbConstants.DB_EID_BROADCAST;
         DB_EID_INVALID = DbConstants.DB_EID_INVALID;
+        DB_ENCRYPT = DbConstants.DB_ENCRYPT;
+        DB_ENCRYPT_AES = DbConstants.DB_ENCRYPT_AES;
         DB_EXCL = DbConstants.DB_EXCL;
         DB_FAST_STAT = DbConstants.DB_FAST_STAT;
         DB_FIRST = DbConstants.DB_FIRST;
@@ -649,10 +696,17 @@ public class Db
         DB_NOSYNC = DbConstants.DB_NOSYNC;
         DB_ODDFILESIZE = DbConstants.DB_ODDFILESIZE;
         DB_ORDERCHKONLY = DbConstants.DB_ORDERCHKONLY;
+        DB_OVERWRITE = DbConstants.DB_OVERWRITE;
         DB_PANIC_ENVIRONMENT = DbConstants.DB_PANIC_ENVIRONMENT;
         DB_POSITION = DbConstants.DB_POSITION;
         DB_PREV = DbConstants.DB_PREV;
         DB_PREV_NODUP = DbConstants.DB_PREV_NODUP;
+        DB_PRINTABLE = DbConstants.DB_PRINTABLE;
+        DB_PRIORITY_DEFAULT = DbConstants.DB_PRIORITY_DEFAULT;
+        DB_PRIORITY_HIGH = DbConstants.DB_PRIORITY_HIGH;
+        DB_PRIORITY_LOW = DbConstants.DB_PRIORITY_LOW;
+        DB_PRIORITY_VERY_HIGH = DbConstants.DB_PRIORITY_VERY_HIGH;
+        DB_PRIORITY_VERY_LOW = DbConstants.DB_PRIORITY_VERY_LOW;
         DB_PRIVATE = DbConstants.DB_PRIVATE;
         DB_RDONLY = DbConstants.DB_RDONLY;
         DB_RECNUM = DbConstants.DB_RECNUM;
@@ -682,6 +736,7 @@ public class Db
         DB_TXN_NOSYNC = DbConstants.DB_TXN_NOSYNC;
         DB_TXN_NOWAIT = DbConstants.DB_TXN_NOWAIT;
         DB_TXN_SYNC = DbConstants.DB_TXN_SYNC;
+        DB_TXN_WRITE_NOSYNC = DbConstants.DB_TXN_WRITE_NOSYNC;
         DB_UPGRADE = DbConstants.DB_UPGRADE;
         DB_USE_ENVIRON = DbConstants.DB_USE_ENVIRON;
         DB_USE_ENVIRON_ROOT = DbConstants.DB_USE_ENVIRON_ROOT;

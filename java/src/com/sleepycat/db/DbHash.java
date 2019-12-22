@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 2000-2001
+ * Copyright (c) 2000-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: DbHash.java,v 11.4 2001/07/02 01:03:22 bostic Exp $
+ * $Id: DbHash.java,v 11.5 2002/01/11 15:52:36 bostic Exp $
  */
 
 package com.sleepycat.db;

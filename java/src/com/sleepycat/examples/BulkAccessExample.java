@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997-2001
+ * Copyright (c) 1997-2002
  *	Sleepycat Software.  All rights reserved.
  *
- * $Id: BulkAccessExample.java,v 1.3 2001/10/05 02:36:07 bostic Exp $
+ * $Id: BulkAccessExample.java,v 1.6 2002/02/05 22:27:13 mjc Exp $
  */
 
 package com.sleepycat.examples;
@@ -95,7 +95,7 @@ class BulkAccessExample
         Db table = new Db(null, 0);
         table.set_error_stream(System.err);
         table.set_errpfx("BulkAccessExample");
-        table.open(FileName, null, Db.DB_BTREE, Db.DB_CREATE, 0644);
+        table.open(null, FileName, null, Db.DB_BTREE, Db.DB_CREATE, 0644);
 
         //
         // Insert records into the database, where the key is the user
@@ -119,7 +119,7 @@ class BulkAccessExample
             {
                 int err;
                 if ((err = table.put(null,
-		    key, data, Db.DB_NOOVERWRITE)) == Db.DB_KEYEXIST) {
+                    key, data, Db.DB_NOOVERWRITE)) == Db.DB_KEYEXIST) {
                         System.out.println("Key " + line + " already exists.");
                 }
             }
@@ -131,37 +131,36 @@ class BulkAccessExample
         }
 
         // Acquire a cursor for the table and two Dbts.
-	Dbc dbc = table.cursor(null, 0);
+        Dbc dbc = table.cursor(null, 0);
         Dbt foo = new Dbt();
-	foo.set_flags(Db.DB_DBT_MALLOC);
+        foo.set_flags(Db.DB_DBT_MALLOC);
 
         Dbt bulk_data = new Dbt();
 
-	// Set Db.DB_DBT_USERMEM on the data Dbt;  Db.DB_MULTIPLE_KEY requires
-	// it.  Then allocate a byte array of a reasonable size;  we'll
-	// go through the database in chunks this big.
-	bulk_data.set_flags(Db.DB_DBT_USERMEM);
-	bulk_data.set_data(new byte[1000000]);
-	bulk_data.set_ulen(1000000);
+        // Set Db.DB_DBT_USERMEM on the data Dbt;  Db.DB_MULTIPLE_KEY requires
+        // it.  Then allocate a byte array of a reasonable size;  we'll
+        // go through the database in chunks this big.
+        bulk_data.set_flags(Db.DB_DBT_USERMEM);
+        bulk_data.set_data(new byte[1000000]);
+        bulk_data.set_ulen(1000000);
 
 
         // Walk through the table, printing the key/data pairs.
         //
         while (dbc.get(foo, bulk_data, Db.DB_NEXT | Db.DB_MULTIPLE_KEY) == 0)
         {
-
-	    DbMultipleKeyDataIterator iterator;
+            DbMultipleKeyDataIterator iterator;
             iterator = new DbMultipleKeyDataIterator(bulk_data);
 
-	    StringDbt key, data;
-	    key = new StringDbt();
-	    data = new StringDbt();
+            StringDbt key, data;
+            key = new StringDbt();
+            data = new StringDbt();
 
-	    while (iterator.next(key, data)) {
-		System.out.println(key.getString() + " : " + data.getString());
-	    }
+            while (iterator.next(key, data)) {
+                System.out.println(key.getString() + " : " + data.getString());
+            }
         }
-	dbc.close();
+        dbc.close();
         table.close(0);
     }
 
@@ -186,9 +185,9 @@ class BulkAccessExample
 
         void setString(String value)
         {
-            set_data(value.getBytes());
-	    set_offset(0);
-            set_size(value.length());
+            byte[] data = value.getBytes();
+            set_data(data);
+            set_size(data.length);
         }
 
         String getString()

@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1997-2001
+ * Copyright (c) 1997-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: DbEnv.java,v 11.47 2001/10/29 14:34:27 krinsky Exp $
+ * $Id: DbEnv.java,v 11.58 2002/08/29 14:22:22 margo Exp $
  */
 
 package com.sleepycat.db;
@@ -29,7 +29,7 @@ public class DbEnv
     // the set_* access methods below, and finally open
     // the environment by calling open().
     //
-    public DbEnv(int flags)
+    public DbEnv(int flags) throws DbException
     {
         constructor_flags_ = flags;
         _init(errstream_, constructor_flags_);
@@ -100,6 +100,14 @@ public class DbEnv
     private native void _close(int flags)
         throws DbException;
 
+    public native void dbremove(DbTxn txn, String name, String subdb,
+                                int flags)
+        throws DbException;
+
+    public native void dbrename(DbTxn txn, String name, String subdb,
+                                String newname, int flags)
+        throws DbException;
+
     public native void err(int errcode, String message);
 
     public native void errx(String message);
@@ -118,7 +126,7 @@ public class DbEnv
 
     // (Internal)
     // called during constructor
-    private native void _init(DbErrcall errcall, int flags);
+    private native void _init(DbErrcall errcall, int flags) throws DbException;
 
     // (Internal)
     // called when DbEnv is constructed as part of Db constructor.
@@ -145,6 +153,10 @@ public class DbEnv
 
     public native void set_cachesize(int gbytes, int bytes, int ncaches)
          throws DbException;
+
+    // Encryption
+    public native void set_encrypt(String passwd, /*u_int32_t*/ int flags)
+        throws DbException;
 
     // Error message callback.
     public void set_errcall(DbErrcall errcall)
@@ -237,19 +249,10 @@ public class DbEnv
     public native void set_mp_mmapsize(/*size_t*/ long mmapsize)
          throws DbException;
 
-    public void set_recovery_init(DbRecoveryInit recovery_init)
-         throws DbException
-    {
-        recovery_init_ = recovery_init;
-        recovery_init_changed(recovery_init);
-    }
-
-    // (Internal)
-    private native void recovery_init_changed(DbRecoveryInit recovery_init)
-         throws DbException;
-
     public native void set_flags(int flags, boolean onoff)
          throws DbException;
+
+    public native void set_rep_limit(int gbytes, int bytes) throws DbException;
 
     public void set_rep_transport(int envid, DbRepTransport transport)
          throws DbException
@@ -282,15 +285,15 @@ public class DbEnv
          throws DbException;
 
     // Feedback
-    public void set_tx_recover(DbTxnRecover tx_recover)
+    public void set_app_dispatch(DbAppDispatch app_dispatch)
          throws DbException
     {
-        tx_recover_ = tx_recover;
-        tx_recover_changed(tx_recover);
+        app_dispatch_ = app_dispatch;
+        app_dispatch_changed(app_dispatch);
     }
 
     // (Internal)
-    private native void tx_recover_changed(DbTxnRecover tx_recover)
+    private native void app_dispatch_changed(DbAppDispatch app_dispatch)
          throws DbException;
 
     // Maximum number of transactions.
@@ -366,12 +369,6 @@ public class DbEnv
     public native DbLogStat log_stat(/*u_int32_t*/ int flags)
          throws DbException;
 
-    public native void log_register(Db dbp, String name)
-         throws DbException;
-
-    public native void log_unregister(Db dbp)
-         throws DbException;
-
     public native DbMpoolStat memp_stat(/*u_int32_t*/ int flags)
          throws DbException;
 
@@ -394,10 +391,13 @@ public class DbEnv
     public native void rep_start(Dbt cookie, int flags)
          throws DbException;
 
+    public native DbRepStat rep_stat(/*u_int32_t*/ int flags)
+         throws DbException;
+
     public native DbTxn txn_begin(DbTxn pid, int flags)
          throws DbException;
 
-    public native int txn_checkpoint(int kbyte, int min, int flags)
+    public native void txn_checkpoint(int kbyte, int min, int flags)
          throws DbException;
 
     public native DbPreplist[] txn_recover(int count, int flags)
@@ -415,9 +415,8 @@ public class DbEnv
     private int constructor_flags_ = 0;
     private Vector dblist_ = new Vector();    // Db's that are open
     private DbEnvFeedback feedback_ = null;
-    private DbRecoveryInit recovery_init_ = null;
     private DbRepTransport rep_transport_ = null;
-    private DbTxnRecover tx_recover_ = null;
+    private DbAppDispatch app_dispatch_ = null;
     private DbOutputStreamErrcall errstream_ =
         new DbOutputStreamErrcall(System.err);
     /*package*/ DbErrcall errcall_ = errstream_;

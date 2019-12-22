@@ -1,10 +1,10 @@
 /*-
  * See the file LICENSE for redistribution information.
  *
- * Copyright (c) 1999-2001
+ * Copyright (c) 1999-2002
  *      Sleepycat Software.  All rights reserved.
  *
- * $Id: DbMemoryException.java,v 11.6 2001/05/16 13:09:29 bostic Exp $
+ * $Id: DbMemoryException.java,v 11.7 2002/01/11 15:52:37 bostic Exp $
  */
 
 package com.sleepycat.db;
