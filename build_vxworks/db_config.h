@@ -63,7 +63,7 @@
 /* #undef HAVE_CLOCK_MONOTONIC */
 
 /* Define to 1 if Berkeley DB release includes strong cryptography. */
-/* #undef HAVE_CRYPTO */
+#define HAVE_CRYPTO 1
 
 /* Define to 1 if you have the `ctime_r' function. */
 #define HAVE_CTIME_R 1

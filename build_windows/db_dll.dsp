@@ -476,10 +476,6 @@ SOURCE=..\clib\strsep.c
 # End Source File
 # Begin Source File
 
-SOURCE=..\common\crypto_stub.c
-# End Source File
-# Begin Source File
-
 SOURCE=..\common\db_byteorder.c
 # End Source File
 # Begin Source File
@@ -533,6 +529,26 @@ SOURCE=..\common\util_sig.c
 # Begin Source File
 
 SOURCE=..\common\zerofill.c
+# End Source File
+# Begin Source File
+
+SOURCE=..\crypto\aes_method.c
+# End Source File
+# Begin Source File
+
+SOURCE=..\crypto\crypto.c
+# End Source File
+# Begin Source File
+
+SOURCE=..\crypto\mersenne\mt19937db.c
+# End Source File
+# Begin Source File
+
+SOURCE=..\crypto\rijndael\rijndael-alg-fst.c
+# End Source File
+# Begin Source File
+
+SOURCE=..\crypto\rijndael\rijndael-api-fst.c
 # End Source File
 # Begin Source File
 
